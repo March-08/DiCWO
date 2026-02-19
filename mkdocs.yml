@@ -77,9 +77,9 @@ nav:
   - Evaluation:
     - Overview: evaluation/overview.md
     - LLM Judge: evaluation/judge.md
-    - Domain Validators: evaluation/validators.md
     - Human Scoresheet: evaluation/scoresheet.md
   - Reference:
+    - Prompt Architecture: reference/prompt-architecture.md
     - Results Format: reference/results.md
     - Domain Background: reference/domain.md
     - API Reference: reference/api.md

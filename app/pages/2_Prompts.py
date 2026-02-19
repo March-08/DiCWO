@@ -25,6 +25,50 @@ init_all_defaults()
 st.title("Edit Prompts & Roles")
 st.caption("Customize the prompts and agent identities used in each run. Changes apply to the next run only.")
 
+# ── How it works ─────────────────────────────────────────────
+
+with st.expander("How do prompts, tasks, and roles affect the experiment?", expanded=False):
+    st.markdown("""
+Every LLM call in this framework is a standard OpenAI chat completion with two key messages:
+
+| Message type | Source | What it controls |
+|-------------|--------|-----------------|
+| **System message** | Agent Role (name + goal + backstory) | *Who* the LLM pretends to be — its expertise, perspective, and focus area |
+| **User message** | Task Description + context from other agents | *What* the LLM is asked to produce — the specific deliverables and constraints |
+
+**There is no framework magic** — roles and tasks are just text that gets sent to the LLM API.
+
+---
+
+**How each system uses them:**
+
+- **Single Agent** — Ignores roles and tasks entirely. Uses a single monolithic prompt
+  (`Single Agent System Prompt` + `Single Agent User Prompt`) that covers all five disciplines in one LLM call.
+
+- **Centralized Manager** — The manager agent (with `Manager System Prompt`) decides which specialist to call next.
+  Each specialist has its **role as the system message** and receives the **task description as the user message**,
+  plus context from previous specialists via the `Context Injection Template`.
+
+- **DiCWO** — Roles serve a dual purpose: they are the **system prompt** for LLM calls *and* the
+  **capability signal** for bidding. A Payload Expert bidding on `payload_design` gets a high fit score;
+  bidding on `market_analysis` gets a low one. Task descriptions are the subtasks that agents bid on and execute.
+
+---
+
+**What happens when you edit something here:**
+
+| What you edit | Effect on experiments |
+|--------------|---------------------|
+| Role **goal** | Changes what the agent optimizes for in its responses |
+| Role **backstory** | Changes the expertise and perspective the LLM adopts |
+| **Task description** | Changes the specific deliverables and constraints for that subtask |
+| **System prompts** | Changes orchestration logic (how manager routes, what single agent covers) |
+
+Edits are applied via monkey-patching before each run — they don't modify source files.
+Click **Reset All to Defaults** at the bottom to restore originals.
+""")
+
+
 # ── Helpers ───────────────────────────────────────────────────
 
 def _get_custom(key: str, default: str) -> str:
@@ -65,6 +109,13 @@ tab_sys, tab_tasks, tab_roles = st.tabs(["System Prompts", "Task Descriptions", 
 
 with tab_sys:
     st.subheader("System Prompts")
+    st.info(
+        "These control **orchestration logic** — how each system architecture operates. "
+        "The *Single Agent* prompts define the monolithic prompt for a one-shot design. "
+        "The *Manager* prompts control how the centralized system routes tasks to specialists. "
+        "The *Integration* and *Context Injection* prompts shape cross-agent coordination.",
+        icon="\u2139\ufe0f",
+    )
 
     prompt_defs = [
         ("SINGLE_AGENT_SYSTEM_PROMPT", "Single Agent System Prompt"),
@@ -101,7 +152,13 @@ with tab_sys:
 
 with tab_tasks:
     st.subheader("Task Descriptions")
-    st.caption("These are the task prompts given to specialist agents.")
+    st.info(
+        "These define **what each specialist agent is asked to produce**. "
+        "In the *Centralized* system, the manager sends these as user messages to each specialist. "
+        "In *DiCWO*, these are the subtasks that agents bid on. "
+        "In *Single Agent* mode, task descriptions are not used (the monolithic prompt covers everything).",
+        icon="\U0001f4cb",
+    )
 
     for task_key, default_desc in prompts_module.TASK_DESCRIPTIONS.items():
         agent = prompts_module.TASK_AGENT_MAP.get(task_key, "")
@@ -130,7 +187,13 @@ with tab_tasks:
 
 with tab_roles:
     st.subheader("Agent Roles")
-    st.caption("Edit agent identities — name, role, goal, and backstory.")
+    st.info(
+        "Each role becomes the **system message** (persona) for every LLM call that agent makes. "
+        "The *goal* steers what the agent optimizes for; the *backstory* sets its expertise level. "
+        "In DiCWO, roles also determine **bidding scores** — a Payload Expert bidding on payload design "
+        "gets a high capability fit, while bidding on market analysis gets a low one.",
+        icon="\U0001f464",
+    )
 
     for identity in roles_module.ALL_ROLES:
         custom = _get_custom_role(identity.name)
