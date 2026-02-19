@@ -1,0 +1,21 @@
+system_type: centralized
+
+# --- LLM for agents ---
+provider: openrouter
+model: meta-llama/llama-3.3-70b-instruct
+temperature: 0.7
+
+# --- LLM for judge ---
+judge_provider: openrouter
+judge_model: openai/gpt-5.2-chat
+
+# --- System ---
+max_rounds: 10
+experiment_name: centralized_manager
+description: "Centralized manager system: Study Manager routes tasks to specialists"
+domain_config: domain/dthh_mission.yaml
+run_judge: true
+run_validators: true
+system_params:
+  manager_model: meta-llama/llama-3.3-70b-instruct:free
+  specialist_model: meta-llama/llama-3.3-70b-instruct:free

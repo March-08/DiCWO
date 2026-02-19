@@ -1,0 +1,43 @@
+system_type: dicwo
+
+# --- LLM for agents ---
+provider: openrouter
+model: meta-llama/llama-3.3-70b-instruct
+temperature: 0.7
+
+# --- LLM for judge ---
+judge_provider: openrouter
+judge_model: openai/gpt-5.2-chat
+
+# --- System ---
+max_rounds: 15
+experiment_name: dicwo_distributed
+description: "DiCWO: Distributed Calibration-Weighted Orchestration"
+domain_config: domain/dthh_mission.yaml
+run_judge: true
+run_validators: true
+system_params:
+  # Bidding weights (paper: alpha*fit - beta*cal - gamma*cost + delta*div)
+  bid_alpha: 1.0
+  bid_beta: 0.5
+  bid_gamma: 0.3
+  bid_delta: 0.2
+  calibration_decay: 0.9
+  # Consensus
+  consensus_threshold: 0.7
+  min_voters: 3
+  # Checkpoint thresholds
+  disagreement_threshold: 0.3
+  uncertainty_threshold: 0.5
+  risk_threshold: 0.6
+  # Policy
+  hitl_evoi_threshold: 0.7
+  max_hitl_calls: 3
+  acceptance_quality: 0.7
+  max_subtask_retries: 1
+  # Agent factory
+  max_spawned_agents: 2
+  agent_ttl_rounds: 5
+  credential_threshold: 0.5
+  # Protocols
+  protocols: ["solo", "audit", "debate", "parallel", "tool_verified"]

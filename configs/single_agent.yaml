@@ -1,0 +1,17 @@
+system_type: single_agent
+
+# --- LLM for agents ---
+provider: openrouter                          # "openai" or "openrouter"
+model: meta-llama/llama-3.3-70b-instruct  # :free = shared pool, rate-limited; drop :free for paid (uses your OpenRouter credits)
+temperature: 0.7
+
+# --- LLM for judge (can be a different provider/model) ---
+judge_provider: openrouter                    # Keep a strong model as judge
+judge_model: openai/gpt-5.2-chat
+
+# --- Experiment ---
+experiment_name: single_agent_baseline
+description: "Single-agent baseline: one LLM call with monolithic prompt"
+domain_config: domain/dthh_mission.yaml
+run_judge: true
+run_validators: true

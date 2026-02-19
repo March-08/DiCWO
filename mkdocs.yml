@@ -1,0 +1,79 @@
+site_name: DiCWO — Multi-Agent Satellite Mission Design
+site_description: Distributed Calibration-Weighted Orchestration for comparing LLM system architectures on satellite constellation design.
+repo_url: https://github.com/marcellopoliti/MAS-Mission-Planning
+repo_name: MAS-Mission-Planning
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.mark
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+    - Configuration: getting-started/configuration.md
+  - Systems:
+    - Overview: systems/overview.md
+    - "System 1: Single Agent": systems/single-agent.md
+    - "System 2: Centralized Manager": systems/centralized.md
+    - "System 3: DiCWO": systems/dicwo.md
+  - Evaluation:
+    - Overview: evaluation/overview.md
+    - LLM Judge: evaluation/judge.md
+    - Domain Validators: evaluation/validators.md
+    - Human Scoresheet: evaluation/scoresheet.md
+  - Reference:
+    - Results Format: reference/results.md
+    - Domain Background: reference/domain.md
+    - API Reference: reference/api.md

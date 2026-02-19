@@ -1,0 +1,36 @@
+# Environment
+.env
+.venv/
+env/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Results (large, regenerable)
+results/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_meta
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# MkDocs build
+site/
+
+# Claude Code
+.claude/
+Dynamic_Agents.pdf
+main-crewAI-ollama-CDF-CXS-5_RAG.py
+audio.txt

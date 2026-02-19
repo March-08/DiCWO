@@ -1,0 +1,24 @@
+# Domain parameters for Direct-To-Handheld (DTHH) satellite mission design
+mission_name: DTHH LEO Constellation
+study_type: Phase 0/A Concurrent Design
+
+# Altitudes to analyze
+altitudes_km: [400, 735, 1100]
+
+# Target service
+service:
+  type: direct-to-handheld
+  target_devices: unmodified smartphones
+  services: [voice, broadband_data]
+  coverage: global
+
+# Reference missions
+references:
+  - name: AST SpaceMobile
+    altitude_km: 735
+    band: low-band cellular
+    antenna_area_m2: 64
+    constellation_size: 168
+
+# Launch vehicle
+launch_vehicle: Falcon 9
