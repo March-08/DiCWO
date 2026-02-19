@@ -37,17 +37,11 @@ judge_model: openai/gpt-5.2-chat
 
 ## Documentation
 
-Full documentation is available as a website. To serve it locally:
+Full documentation: **[dicwo-docs.vercel.app](https://dicwo-docs.vercel.app)**
+
+To serve locally:
 
 ```bash
 pip install mkdocs-material
 mkdocs serve
-```
-
-Then open [http://localhost:8000](http://localhost:8000).
-
-To deploy to GitHub Pages:
-
-```bash
-mkdocs gh-deploy
 ```
