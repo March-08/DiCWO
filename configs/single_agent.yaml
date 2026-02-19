@@ -14,4 +14,3 @@ experiment_name: single_agent_baseline
 description: "Single-agent baseline: one LLM call with monolithic prompt"
 domain_config: domain/dthh_mission.yaml
 run_judge: true
-run_validators: true

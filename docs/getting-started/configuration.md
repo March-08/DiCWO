@@ -24,7 +24,6 @@ max_rounds: 10                   # max orchestration rounds (multi-agent only)
 
 # ── Evaluation ──
 run_judge: true
-run_validators: true
 
 # ── Domain ──
 domain_config: domain/dthh_mission.yaml

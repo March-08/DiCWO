@@ -69,4 +69,4 @@ The primary real-world reference for DTHH:
 
 ## Implementation
 
-Reference data is defined in `src/domain/reference_data.py` as Python constants. Domain parameters for the study are in `configs/domain/dthh_mission.yaml`.
+Domain parameters for the study are in `configs/domain/dthh_mission.yaml`.

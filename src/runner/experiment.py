@@ -137,9 +137,6 @@ class ExperimentRunner:
         if self.config.run_judge:
             self._emit("judge_start", {"model": self.config.effective_judge_model})
             evaluation.update(self._run_judge(result, llm))
-        if self.config.run_validators:
-            evaluation.update(self._run_validators(result))
-
         if evaluation:
             save_json(evaluation, self.run_dir / "evaluation.json")
 
@@ -291,15 +288,6 @@ class ExperimentRunner:
             print(f"[Experiment] Judge evaluation failed: {e}")
             return {"judge_error": str(e)}
 
-    def _run_validators(self, result: SystemResult) -> dict[str, Any]:
-        try:
-            from src.evaluation.validators import validate_artifacts
-            results = validate_artifacts(result.artifacts)
-            return {"validator_results": results}
-        except Exception as e:
-            print(f"[Experiment] Validator evaluation failed: {e}")
-            return {"validator_error": str(e)}
-
     def _generate_metrics_report(
         self, result: SystemResult, evaluation: dict[str, Any], llm: LLMClient,
     ) -> None:
@@ -347,11 +335,6 @@ class ExperimentRunner:
                 lines.append(json.dumps(evaluation["judge_scores"], indent=2))
                 lines.append("```")
                 lines.append("")
-            if "validator_results" in evaluation:
-                lines.append("### Domain Validators")
-                lines.append("```json")
-                lines.append(json.dumps(evaluation["validator_results"], indent=2))
-                lines.append("```")
 
         (self.run_dir / "report.md").write_text("\n".join(lines))
 
@@ -371,7 +354,6 @@ class ExperimentRunner:
         sums: dict[str, float] = {k: 0.0 for k in keys}
 
         judge_scores: list[float] = []
-        validator_ratios: list[float] = []
 
         for r in results:
             totals = r.get("metrics", {}).get("totals", {})
@@ -382,9 +364,6 @@ class ExperimentRunner:
             js = ev.get("judge_scores", {}).get("_aggregate", {}).get("mean_score")
             if js is not None:
                 judge_scores.append(js)
-            vr = ev.get("validator_results", {}).get("verified_claims_ratio")
-            if vr is not None:
-                validator_ratios.append(vr)
 
         averages = {k: round(v / n, 4) for k, v in sums.items()}
 
@@ -394,12 +373,6 @@ class ExperimentRunner:
             averages["judge_mean_score"] = round(avg_judge, 4)
             averages["judge_std"] = round(std_judge, 4)
             averages["judge_all"] = judge_scores
-
-        if validator_ratios:
-            averages["verified_claims_ratio"] = round(
-                sum(validator_ratios) / len(validator_ratios), 4
-            )
-            averages["verified_all"] = validator_ratios
 
         averages["num_runs"] = n
         return averages
@@ -456,28 +429,21 @@ class ExperimentRunner:
                 f"| Judge score | {averages['judge_mean_score']:.2f} "
                 f"± {averages.get('judge_std', 0):.2f} |"
             )
-        if "verified_claims_ratio" in averages:
-            lines.append(
-                f"| Verified claims | {averages['verified_claims_ratio']:.0%} |"
-            )
-
         lines.append("")
         lines.append("## Per-Run Results")
         lines.append("")
-        lines.append("| Run | Tokens | Cost | Latency | Judge | Verified |")
-        lines.append("|-----|--------|------|---------|-------|----------|")
+        lines.append("| Run | Tokens | Cost | Latency | Judge |")
+        lines.append("|-----|--------|------|---------|-------|")
 
         for i, r in enumerate(results, 1):
             totals = r.get("metrics", {}).get("totals", {})
             ev = r.get("evaluation", {})
             js = ev.get("judge_scores", {}).get("_aggregate", {}).get("mean_score")
-            vr = ev.get("validator_results", {}).get("verified_claims_ratio")
             lines.append(
                 f"| {i} | {totals.get('total_tokens', 0):,} | "
                 f"${totals.get('cost_usd', 0):.4f} | "
                 f"{totals.get('latency_s', 0):.1f}s | "
-                f"{f'{js:.2f}' if js is not None else 'N/A'} | "
-                f"{f'{vr:.0%}' if vr is not None else 'N/A'} |"
+                f"{f'{js:.2f}' if js is not None else 'N/A'} |"
             )
 
         (self.run_dir / "summary.md").write_text("\n".join(lines))

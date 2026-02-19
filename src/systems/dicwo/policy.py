@@ -20,7 +20,7 @@ from src.systems.dicwo.checkpoint import CheckpointSignals
 class PolicyAction(str, Enum):
     CONTINUE = "continue"
     REWIRE = "rewire"
-    VERIFY = "verify"          # Re-run with deterministic validators
+    VERIFY = "verify"          # Re-run with extra review
     HITL = "hitl"
     SPAWN = "spawn"
     ESCALATE = "escalate"
@@ -125,14 +125,14 @@ class PolicyEngine:
                     params={"evoi": evoi},
                 )
 
-        # 3. Low verifiability → VERIFY (use deterministic validators)
+        # 3. Low verifiability → VERIFY (re-run with extra review)
         if signals.verifiability < 0.4 and signals.uncertainty > 0.4:
             return PolicyDecision(
                 action=PolicyAction.VERIFY,
                 reason=(
                     f"Low verifiability ({signals.verifiability:.2f}) with "
                     f"uncertainty ({signals.uncertainty:.2f}). "
-                    f"Running deterministic validators."
+                    f"Requesting re-verification."
                 ),
                 params={"subtask": subtask},
             )

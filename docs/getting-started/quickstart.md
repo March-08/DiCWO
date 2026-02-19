@@ -28,7 +28,6 @@ python3 scripts/run_experiment.py -c configs/dicwo.yaml
 
 ```bash
 python3 scripts/run_all.py --no-judge              # skip LLM judge
-python3 scripts/run_all.py --no-judge --no-validators  # agents only
 ```
 
 ## Check results
@@ -57,7 +56,6 @@ results/<timestamp>_comparison/
 |------|-------------|
 | `--repeat N`, `-n N` | Run each system N times, compute averages |
 | `--no-judge` | Skip LLM-as-a-Judge evaluation |
-| `--no-validators` | Skip deterministic domain validators |
 | `--results-dir DIR` | Output directory (default: `results/`) |
 
 ### `run_experiment.py`
@@ -67,7 +65,6 @@ results/<timestamp>_comparison/
 | `--config PATH`, `-c` | Path to YAML config (required) |
 | `--repeat N`, `-n N` | Run N times, compute averages |
 | `--no-judge` | Skip LLM judge |
-| `--no-validators` | Skip validators |
 | `--results-dir DIR`, `-o` | Output directory |
 
 ## Jupyter Notebooks

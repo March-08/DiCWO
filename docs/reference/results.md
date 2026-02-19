@@ -13,7 +13,7 @@
         metrics.json              # Tokens, costs, latencies
         artifacts.json            # Raw agent outputs
         conversation_log.json     # Full message trace
-        evaluation.json           # Judge scores + validators
+        evaluation.json           # Judge scores
     ```
 
 === "Grouped run (run_all)"
@@ -106,7 +106,7 @@ Full message trace with timestamps, agent names, roles, and per-call metadata (t
 
 ### `evaluation.json`
 
-Combined judge scores and validator results. See [LLM Judge](../evaluation/judge.md) and [Domain Validators](../evaluation/validators.md) for schemas.
+Judge scores and evaluation results. See [LLM Judge](../evaluation/judge.md) for the schema.
 
 ### `averages.json`
 
@@ -120,7 +120,6 @@ Only present with `--repeat N`. Contains mean and standard deviation across runs
   "latency_s": 43.8,
   "judge_mean_score": 3.72,
   "judge_std": 0.15,
-  "judge_all": [3.6, 3.8, 3.75],
-  "verified_claims_ratio": 0.83
+  "judge_all": [3.6, 3.8, 3.75]
 }
 ```

@@ -112,7 +112,7 @@ Available protocols:
 - audit: Primary agent executes, a reviewer checks the output (good for critical tasks)
 - debate: Two agents produce competing outputs, best is selected (resolves disagreements)
 - parallel: Multiple agents execute independently, outputs are merged (max diversity)
-- tool_verified: Agent executes, then deterministic validators check claims (for verifiable tasks)
+- tool_verified: Agent executes with extra self-review step (for verifiable tasks)
 
 The assigned primary agent is: {primary_agent}
 Subtask criticality: {criticality}

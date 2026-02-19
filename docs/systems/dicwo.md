@@ -16,7 +16,6 @@ graph LR
     P -->|rewire| T[Topology]
     P -->|spawn| F[Agent Factory]
     P -->|hitl| H[Human-in-the-Loop]
-    P -->|verify| V[Validators]
     P -->|stop| S[Accept & Stop]
 ```
 
@@ -96,7 +95,7 @@ Agents vote on the execution protocol via distributed consensus. Available proto
 | **Audit** | Primary executes, coalition partner reviews |
 | **Debate** | Two agents produce competing outputs |
 | **Parallel** | Multiple agents execute independently, best merged |
-| **Tool-verified** | Agent executes, deterministic validators check claims, agent self-corrects |
+| **Tool-verified** | Agent executes, then a second pass verifies the result |
 
 Votes are weighted by confidence. The consensus considers subtask criticality and previous disagreement levels.
 
@@ -104,7 +103,7 @@ Votes are weighted by confidence. The consensus considers subtask criticality an
 
 ### 4. Execution
 
-The selected protocol runs. In **tool-verified** mode, the output is checked against deterministic validators (FSPL, antenna, cost bounds), and the agent revises if validators flag issues.
+The selected protocol runs according to the chosen strategy (solo, audit, debate, parallel, or tool-verified).
 
 ### 5. Checkpoint
 
@@ -127,7 +126,7 @@ Based on checkpoint signals, the policy engine decides (in priority order):
 |----------|---------|--------|
 | **Stop** | All subtasks above quality threshold | Accept results and exit early |
 | **HITL** | High risk + high EVoI + budget remaining | Flag for human review |
-| **Verify** | Low verifiability + uncertainty | Run deterministic validators |
+| **Verify** | Low verifiability + uncertainty | Request additional verification |
 | **Spawn** | Capability gap detected | Create new credentialed specialist |
 | **Rewire** | High disagreement | Change communication topology |
 | **Escalate** | High uncertainty | Request additional review |

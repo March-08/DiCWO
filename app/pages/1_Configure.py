@@ -211,34 +211,19 @@ with col2:
 
 st.divider()
 st.subheader("Evaluation")
-st.caption("Choose which evaluation methods to run after the design is generated.")
+st.caption("Choose whether to run a judge evaluation after the design is generated.")
 
-col1, col2 = st.columns(2)
-with col1:
-    run_judge = st.checkbox(
-        "Run LLM Judge",
-        value=yaml_defaults.get("run_judge", get("run_judge", True)),
-        help=(
-            "Uses a separate LLM to score each section of the mission design on "
-            "technical accuracy, completeness, and consistency. Adds cost and time, "
-            "but gives a quality score for comparison."
-        ),
-        key="_run_judge_check",
-    )
-    put("run_judge", run_judge)
-
-with col2:
-    run_validators = st.checkbox(
-        "Run Domain Validators",
-        value=yaml_defaults.get("run_validators", get("run_validators", True)),
-        help=(
-            "Runs deterministic checks on the design outputs: verifies that link budget "
-            "numbers are physically plausible, constellation sizes make sense, frequency "
-            "bands are valid, etc. Free and fast."
-        ),
-        key="_run_validators_check",
-    )
-    put("run_validators", run_validators)
+run_judge = st.checkbox(
+    "Run LLM Judge",
+    value=yaml_defaults.get("run_judge", get("run_judge", True)),
+    help=(
+        "Uses a separate LLM to score each section of the mission design on "
+        "technical accuracy, completeness, and consistency. Adds cost and time, "
+        "but gives a quality score for comparison."
+    ),
+    key="_run_judge_check",
+)
+put("run_judge", run_judge)
 
 # ── DiCWO Parameters ──────────────────────────────────────────
 
@@ -312,7 +297,7 @@ if system_type == "dicwo":
         "audit": "One agent executes, a second agent reviews the output",
         "debate": "Two agents debate, consensus selects the best answer",
         "parallel": "Multiple agents execute in parallel, best output selected",
-        "tool_verified": "Agent executes, then deterministic validators check the result",
+        "tool_verified": "Agent executes, then a second pass verifies the result",
     }
 
     with st.expander("Execution Protocols", expanded=False):
@@ -356,6 +341,5 @@ with col2:
     st.markdown(f"- Judge model: `{judge_model}`")
     st.markdown(f"- Judge price: ${j_inp:.2f} in / ${j_out:.2f} out per 1M tokens")
     st.markdown(f"- LLM Judge: {'Enabled' if run_judge else 'Disabled'}")
-    st.markdown(f"- Domain Validators: {'Enabled' if run_validators else 'Disabled'}")
 
 st.success("Configuration saved. Go to **Run Experiment** to start.", icon="\u2705")

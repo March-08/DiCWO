@@ -37,11 +37,6 @@ def main() -> None:
         help="Skip LLM judge evaluation",
     )
     parser.add_argument(
-        "--no-validators",
-        action="store_true",
-        help="Skip domain validators",
-    )
-    parser.add_argument(
         "--repeat", "-n",
         type=int,
         default=1,
@@ -67,8 +62,6 @@ def main() -> None:
 
     if args.no_judge:
         config.run_judge = False
-    if args.no_validators:
-        config.run_validators = False
 
     print(f"Provider: {config.provider}, Model: {config.model}")
     if config.run_judge:
@@ -94,8 +87,6 @@ def main() -> None:
         print(f"Latency:  {avgs.get('latency_s', 0):.1f}s (avg)")
         if "judge_mean_score" in avgs:
             print(f"Judge:    {avgs['judge_mean_score']:.2f} ± {avgs.get('judge_std', 0):.2f}")
-        if "verified_claims_ratio" in avgs:
-            print(f"Valid:    {avgs['verified_claims_ratio']:.0%}")
     else:
         results = runner.run()
         print("\n" + "=" * 60)
@@ -114,10 +105,6 @@ def main() -> None:
                 agg = eval_data["judge_scores"].get("_aggregate", {})
                 if agg:
                     print(f"Judge:   {agg.get('mean_score', 'N/A')}/5")
-            if "validator_results" in eval_data:
-                ratio = eval_data["validator_results"].get("verified_claims_ratio")
-                if ratio is not None:
-                    print(f"Valid:   {ratio:.0%}")
 
 
 if __name__ == "__main__":

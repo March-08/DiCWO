@@ -49,8 +49,6 @@ def main() -> None:
                         help="Number of runs per system (default: 1)")
     parser.add_argument("--no-judge", action="store_true",
                         help="Skip LLM judge evaluation")
-    parser.add_argument("--no-validators", action="store_true",
-                        help="Skip domain validators")
     parser.add_argument("--results-dir", default="results",
                         help="Base results directory (default: results/)")
     args = parser.parse_args()
@@ -78,8 +76,6 @@ def main() -> None:
         config = ExperimentConfig.from_yaml(config_path)
         if args.no_judge:
             config.run_judge = False
-        if args.no_validators:
-            config.run_validators = False
 
         print(f"\n{'='*60}")
         print(f"  System: {config.system_type}")

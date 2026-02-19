@@ -123,22 +123,6 @@ scores = judge.evaluate(artifacts)
 print(scores["_aggregate"]["mean_score"])
 ```
 
-### Validators
-
-:material-file-code: `src/evaluation/validators.py`
-
-```python
-from src.evaluation.validators import validate_artifacts, fspl_db, antenna_gain_db
-
-# Run all checks on artifacts
-results = validate_artifacts(artifacts)
-print(results["verified_claims_ratio"])
-
-# Individual physics functions
-fspl_db(2e9, 735e3)        # Free-space path loss in dB
-antenna_gain_db(9.0, 2e9)  # Antenna gain in dBi
-```
-
 ### Scoresheet
 
 :material-file-code: `src/evaluation/scoresheet.py`

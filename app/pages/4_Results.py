@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
 import sys
 import zipfile
 from pathlib import Path
@@ -100,17 +101,106 @@ for g in reversed(groups):
         systems_str = ", ".join(sys_dirs.keys())
         selectable_groups[f"{g.name}  ({systems_str})"] = g
 
-# Mode toggle
+# Mode toggle — always show compare option if there are at least 2 runs
+view_options = ["Single Run"]
 if selectable_groups:
+    view_options.append("Compare Systems (Group)")
+if len(leaf_runs) >= 2:
+    view_options.append("Compare Selected Runs")
+
+if len(view_options) > 1:
     view_mode = st.radio(
         "View mode",
-        ["Single Run", "Compare Systems (Group)"],
+        view_options,
         horizontal=True,
-        help="**Single Run**: detailed view of one run. **Compare**: side-by-side charts across systems.",
+        help=(
+            "**Single Run**: detailed view of one run. "
+            "**Compare Systems (Group)**: side-by-side charts for a pre-grouped experiment. "
+            "**Compare Selected Runs**: pick any runs to compare."
+        ),
         key="_view_mode",
     )
 else:
     view_mode = "Single Run"
+
+
+# ── Helper: render comparison charts ──────────────────────────
+
+def _render_comparison_charts(comp_runs: list[dict[str, Any]]) -> None:
+    """Render comparison table and charts from a list of comparison row dicts."""
+
+    comp_rows = []
+    for r in comp_runs:
+        comp_rows.append({
+            "System": r.get("system_type", "?"),
+            "Model": r.get("model", "?"),
+            "Runs": r.get("num_runs", 1),
+            "Calls": r.get("num_calls", 0),
+            "Tokens": r.get("total_tokens", 0),
+            "Cost ($)": r.get("cost_usd", 0),
+            "Latency (s)": r.get("latency_s", 0),
+            "Judge Score": r.get("judge_mean_score"),
+        })
+
+    df_comp = pd.DataFrame(comp_rows)
+    st.dataframe(
+        df_comp.style.format({
+            "Cost ($)": "${:.4f}",
+            "Latency (s)": "{:.1f}",
+            "Tokens": "{:,.0f}",
+            "Calls": "{:.0f}",
+            "Judge Score": lambda x: f"{x:.2f}" if x is not None else "N/A",
+        }),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    systems = df_comp["System"].tolist()
+    palette = ["#4da6ff", "#ff6b6b", "#51cf66", "#ffa94d", "#cc5de8"]
+    colors = palette[: len(systems)]
+
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4))
+
+    axes[0].bar(systems, df_comp["Tokens"], color=colors)
+    axes[0].set_title("Total Tokens")
+    axes[0].set_ylabel("Tokens")
+    for i, v in enumerate(df_comp["Tokens"]):
+        axes[0].text(i, v, f"{v:,.0f}", ha="center", va="bottom", fontsize=8)
+
+    axes[1].bar(systems, df_comp["Cost ($)"], color=colors)
+    axes[1].set_title("Total Cost ($)")
+    axes[1].set_ylabel("USD")
+    for i, v in enumerate(df_comp["Cost ($)"]):
+        axes[1].text(i, v, f"${v:.4f}", ha="center", va="bottom", fontsize=8)
+
+    judge_vals = [s if s is not None else 0 for s in df_comp["Judge Score"]]
+    has_judge = any(s is not None for s in df_comp["Judge Score"].tolist())
+    if has_judge:
+        axes[2].bar(systems, judge_vals, color=colors)
+        axes[2].set_title("Judge Score")
+        axes[2].set_ylabel("Score")
+        for i, v in enumerate(judge_vals):
+            if df_comp["Judge Score"].iloc[i] is not None:
+                axes[2].text(i, v, f"{v:.2f}", ha="center", va="bottom", fontsize=8)
+    else:
+        axes[2].text(0.5, 0.5, "No judge scores", ha="center", va="center",
+                     transform=axes[2].transAxes, fontsize=12, color="gray")
+        axes[2].set_title("Judge Score")
+
+    plt.tight_layout()
+    st.pyplot(fig)
+    plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(8, max(2, len(systems) * 0.8)))
+    ax.barh(systems, df_comp["Latency (s)"], color=colors)
+    ax.set_xlabel("Seconds")
+    ax.set_title("Total Latency Comparison")
+    for i, v in enumerate(df_comp["Latency (s)"]):
+        ax.text(v, i, f" {v:.1f}s", va="center", fontsize=9)
+    plt.tight_layout()
+    st.pyplot(fig)
+    plt.close(fig)
+
 
 # ── SINGLE RUN VIEW ──────────────────────────────────────────
 
@@ -285,36 +375,6 @@ if view_mode == "Single Run":
                             else:
                                 st.markdown(f"**{k}**: {v}")
 
-    # ── Validator Results ─────────────────────────────────────
-
-    validator_results = evaluation.get("validator_results", {})
-    if validator_results:
-        st.divider()
-        st.subheader("Domain Validators")
-        st.caption(
-            "Deterministic checks on physical plausibility: link budgets, frequency bands, "
-            "constellation sizing, and cross-section consistency."
-        )
-
-        ratio = validator_results.get("verified_claims_ratio")
-        if ratio is not None:
-            col1, _ = st.columns([1, 3])
-            col1.metric("Verified Claims Ratio", f"{ratio:.0%}")
-
-        checks = validator_results.get("checks", validator_results.get("results", {}))
-        if isinstance(checks, dict):
-            for check_name, result in checks.items():
-                if isinstance(result, dict):
-                    passed = result.get("passed", result.get("pass", None))
-                    icon = "\u2705" if passed else "\u274c" if passed is False else "\u2753"
-                    with st.expander(f"{icon} {check_name}"):
-                        for k, v in result.items():
-                            st.markdown(f"**{k}**: {v}")
-                else:
-                    passed = bool(result)
-                    icon = "\u2705" if passed else "\u274c"
-                    st.markdown(f"{icon} **{check_name}**: {result}")
-
     # ── Mission Report ────────────────────────────────────────
 
     report_key = "mission_report_best" if "mission_report_best" in data else "mission_report"
@@ -392,10 +452,38 @@ if view_mode == "Single Run":
         with tab_eval:
             st.json(evaluation) if evaluation else st.caption("No evaluation data available.")
 
+    # ── Delete run ─────────────────────────────────────────────
 
-# ── COMPARE SYSTEMS VIEW ─────────────────────────────────────
+    st.divider()
+    # Find the top-level result folder (parent of the leaf run if nested)
+    _delete_target = selected_path
+    while _delete_target.parent != RESULTS_DIR and _delete_target.parent.parent.exists():
+        _delete_target = _delete_target.parent
+        if _delete_target == RESULTS_DIR:
+            _delete_target = selected_path
+            break
 
-else:  # view_mode == "Compare Systems (Group)"
+    _del_key = f"_confirm_del_{_delete_target.name}"
+    with st.expander("Danger Zone", expanded=False):
+        st.warning(
+            f"This will permanently delete **{_delete_target.name}** and all its contents.",
+            icon="\u26a0\ufe0f",
+        )
+        confirm = st.checkbox("I understand, delete this result", key=_del_key)
+        if st.button(
+            "Delete Result",
+            type="primary",
+            disabled=not confirm,
+            key=f"_btn_del_{_delete_target.name}",
+        ):
+            shutil.rmtree(_delete_target)
+            st.success("Deleted! Refreshing...")
+            st.rerun()
+
+
+# ── COMPARE SYSTEMS (GROUP) VIEW ─────────────────────────────
+
+elif view_mode == "Compare Systems (Group)":
     selected_group_label = st.selectbox(
         "Select experiment group",
         options=list(selectable_groups.keys()),
@@ -418,86 +506,7 @@ else:  # view_mode == "Compare Systems (Group)"
         st.warning("No comparable runs found in this group.")
         st.stop()
 
-    # ── Comparison table ──────────────────────────────────────
-
-    comp_rows = []
-    for r in comp_runs:
-        comp_rows.append({
-            "System": r.get("system_type", "?"),
-            "Model": r.get("model", "?"),
-            "Runs": r.get("num_runs", 1),
-            "Calls": r.get("num_calls", 0),
-            "Tokens": r.get("total_tokens", 0),
-            "Cost ($)": r.get("cost_usd", 0),
-            "Latency (s)": r.get("latency_s", 0),
-            "Judge Score": r.get("judge_mean_score"),
-        })
-
-    df_comp = pd.DataFrame(comp_rows)
-    st.dataframe(
-        df_comp.style.format({
-            "Cost ($)": "${:.4f}",
-            "Latency (s)": "{:.1f}",
-            "Tokens": "{:,.0f}",
-            "Calls": "{:.0f}",
-            "Judge Score": lambda x: f"{x:.2f}" if x is not None else "N/A",
-        }),
-        use_container_width=True,
-        hide_index=True,
-    )
-
-    # ── Multi-metric bar charts ───────────────────────────────
-
-    systems = df_comp["System"].tolist()
-    palette = ["#4da6ff", "#ff6b6b", "#51cf66", "#ffa94d", "#cc5de8"]
-    colors = palette[: len(systems)]
-
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4))
-
-    # Tokens
-    axes[0].bar(systems, df_comp["Tokens"], color=colors)
-    axes[0].set_title("Total Tokens")
-    axes[0].set_ylabel("Tokens")
-    for i, v in enumerate(df_comp["Tokens"]):
-        axes[0].text(i, v, f"{v:,.0f}", ha="center", va="bottom", fontsize=8)
-
-    # Cost
-    axes[1].bar(systems, df_comp["Cost ($)"], color=colors)
-    axes[1].set_title("Total Cost ($)")
-    axes[1].set_ylabel("USD")
-    for i, v in enumerate(df_comp["Cost ($)"]):
-        axes[1].text(i, v, f"${v:.4f}", ha="center", va="bottom", fontsize=8)
-
-    # Judge Score
-    judge_vals = [s if s is not None else 0 for s in df_comp["Judge Score"]]
-    has_judge = any(s is not None for s in df_comp["Judge Score"].tolist())
-    if has_judge:
-        axes[2].bar(systems, judge_vals, color=colors)
-        axes[2].set_title("Judge Score")
-        axes[2].set_ylabel("Score")
-        for i, v in enumerate(judge_vals):
-            if df_comp["Judge Score"].iloc[i] is not None:
-                axes[2].text(i, v, f"{v:.2f}", ha="center", va="bottom", fontsize=8)
-    else:
-        axes[2].text(0.5, 0.5, "No judge scores", ha="center", va="center",
-                     transform=axes[2].transAxes, fontsize=12, color="gray")
-        axes[2].set_title("Judge Score")
-
-    plt.tight_layout()
-    st.pyplot(fig)
-    plt.close(fig)
-
-    # ── Latency comparison ────────────────────────────────────
-
-    fig, ax = plt.subplots(figsize=(8, max(2, len(systems) * 0.8)))
-    ax.barh(systems, df_comp["Latency (s)"], color=colors)
-    ax.set_xlabel("Seconds")
-    ax.set_title("Total Latency Comparison")
-    for i, v in enumerate(df_comp["Latency (s)"]):
-        ax.text(v, i, f" {v:.1f}s", va="center", fontsize=9)
-    plt.tight_layout()
-    st.pyplot(fig)
-    plt.close(fig)
+    _render_comparison_charts(comp_runs)
 
     # ── Per-system details ────────────────────────────────────
 
@@ -560,3 +569,99 @@ else:  # view_mode == "Compare Systems (Group)"
         mime="application/zip",
         use_container_width=True,
     )
+
+    # ── Delete group ──────────────────────────────────────────
+
+    st.divider()
+    _gdel_key = f"_confirm_gdel_{group_path.name}"
+    with st.expander("Danger Zone", expanded=False):
+        st.warning(
+            f"This will permanently delete **{group_path.name}** and all its contents "
+            f"({len(sys_dirs)} system runs).",
+            icon="\u26a0\ufe0f",
+        )
+        gconfirm = st.checkbox("I understand, delete this experiment group", key=_gdel_key)
+        if st.button(
+            "Delete Experiment Group",
+            type="primary",
+            disabled=not gconfirm,
+            key=f"_btn_gdel_{group_path.name}",
+        ):
+            shutil.rmtree(group_path)
+            st.success("Deleted! Refreshing...")
+            st.rerun()
+
+
+# ── COMPARE SELECTED RUNS VIEW ───────────────────────────────
+
+elif view_mode == "Compare Selected Runs":
+    from src.runner.comparison import compare_runs
+
+    st.caption("Pick any 2 or more runs to compare side by side.")
+
+    selected_labels = st.multiselect(
+        "Select runs to compare",
+        options=list(selectable_runs.keys()),
+        default=list(selectable_runs.keys())[:min(3, len(selectable_runs))],
+        key="_compare_multi_selector",
+    )
+
+    if len(selected_labels) < 2:
+        st.warning("Select at least 2 runs to compare.", icon="\u261d\ufe0f")
+        st.stop()
+
+    selected_paths = [selectable_runs[label] for label in selected_labels]
+
+    st.divider()
+    st.subheader("Run Comparison")
+
+    comparison = compare_runs(selected_paths)
+    comp_runs = comparison.get("runs", [])
+
+    if not comp_runs:
+        st.warning("Could not load data from the selected runs.")
+        st.stop()
+
+    # Use labels that distinguish runs (system_type + short path)
+    for r in comp_runs:
+        run_path = Path(r["run_dir"])
+        rel = run_path.relative_to(RESULTS_DIR)
+        r["system_type"] = f"{r['system_type']} ({rel.parts[0][:20]})"
+
+    _render_comparison_charts(comp_runs)
+
+    # ── Per-run details in tabs ───────────────────────────────
+
+    st.divider()
+    st.subheader("Per-Run Details")
+
+    tab_labels = [f"{Path(r['run_dir']).relative_to(RESULTS_DIR).parts[0][:25]}" for r in comp_runs]
+    tabs = st.tabs(tab_labels)
+
+    for tab, r in zip(tabs, comp_runs):
+        with tab:
+            run_path = Path(r["run_dir"])
+            run_data = load_run(run_path)
+            if not run_data:
+                st.warning(f"No data found for {run_path.name}")
+                continue
+
+            sys_metrics = run_data.get("metrics", {})
+            sys_totals = sys_metrics.get("totals", {})
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Calls", f"{sys_totals.get('num_calls', 0):.0f}")
+            c2.metric("Tokens", f"{sys_totals.get('total_tokens', 0):,.0f}")
+            c3.metric("Cost", f"${sys_totals.get('cost_usd', 0):.4f}")
+            c4.metric("Latency", f"{sys_totals.get('latency_s', 0):.1f}s")
+
+            sys_eval = run_data.get("evaluation", {})
+            sys_judge = sys_eval.get("judge_scores", {})
+            agg = sys_judge.get("_aggregate", {})
+            if agg:
+                st.metric("Judge Score", f"{agg.get('mean_score', 0):.2f}")
+
+            rk = "mission_report_best" if "mission_report_best" in run_data else "mission_report"
+            report = run_data.get(rk, "")
+            if report:
+                with st.expander("Mission Report", expanded=False):
+                    st.markdown(report)

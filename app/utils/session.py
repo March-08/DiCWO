@@ -39,8 +39,6 @@ def init_all_defaults() -> None:
     init_state("judge_provider", "openrouter")
     init_state("judge_model", "openai/gpt-4.1")
     init_state("run_judge", True)
-    init_state("run_validators", True)
-
     # DiCWO params
     init_state("system_params", {})
 

@@ -99,7 +99,6 @@ def _extract_row(run_dir: Path) -> dict[str, Any]:
             "latency_s": averages.get("latency_s", 0),
             "judge_mean_score": averages.get("judge_mean_score"),
             "judge_std": averages.get("judge_std"),
-            "verified_claims_ratio": averages.get("verified_claims_ratio"),
         }
 
     # Single run
@@ -108,7 +107,6 @@ def _extract_row(run_dir: Path) -> dict[str, Any]:
     totals = metrics.get("totals", {})
     judge_scores = evaluation.get("judge_scores", {})
     aggregate = judge_scores.get("_aggregate", {})
-    validators = evaluation.get("validator_results", {})
 
     return {
         "run_dir": str(run_dir),
@@ -121,7 +119,6 @@ def _extract_row(run_dir: Path) -> dict[str, Any]:
         "latency_s": totals.get("latency_s", 0),
         "judge_mean_score": aggregate.get("mean_score"),
         "judge_std": None,
-        "verified_claims_ratio": validators.get("verified_claims_ratio"),
     }
 
 
@@ -160,8 +157,8 @@ def comparison_to_markdown(comparison: dict[str, Any]) -> str:
     if has_repeats:
         header += " Runs |"
         sep += "------|"
-    header += " Calls | Tokens | Cost ($) | Latency (s) | Judge Score | Verified |"
-    sep += "-------|--------|----------|-------------|-------------|----------|"
+    header += " Calls | Tokens | Cost ($) | Latency (s) | Judge Score |"
+    sep += "-------|--------|----------|-------------|-------------|"
 
     lines = ["# System Comparison", "", header, sep]
 
@@ -172,14 +169,12 @@ def comparison_to_markdown(comparison: dict[str, Any]) -> str:
             if r.get("judge_std") is not None:
                 judge += f" ± {r['judge_std']:.2f}"
 
-        verified = f"{r['verified_claims_ratio']:.2f}" if r.get("verified_claims_ratio") is not None else "N/A"
-
         row = f"| {r['system_type']} | {r['model']} |"
         if has_repeats:
             row += f" {r.get('num_runs', 1)} |"
         row += (
             f" {r['num_calls']:.0f} | {r['total_tokens']:,.0f} | "
-            f"{r['cost_usd']:.4f} | {r['latency_s']:.1f} | {judge} | {verified} |"
+            f"{r['cost_usd']:.4f} | {r['latency_s']:.1f} | {judge} |"
         )
         lines.append(row)
 

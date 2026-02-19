@@ -15,7 +15,6 @@ experiment_name: dicwo_distributed
 description: "DiCWO: Distributed Calibration-Weighted Orchestration"
 domain_config: domain/dthh_mission.yaml
 run_judge: true
-run_validators: true
 system_params:
   # Bidding weights (paper: alpha*fit - beta*cal - gamma*cost + delta*div)
   bid_alpha: 1.0

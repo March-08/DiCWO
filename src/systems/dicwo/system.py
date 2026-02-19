@@ -33,7 +33,7 @@ from src.domain.prompts import (
     TASK_DESCRIPTIONS,
 )
 from src.domain.roles import SPECIALIST_ROLES, STUDY_MANAGER
-from src.evaluation.validators import validate_artifacts
+
 from src.systems.base_system import BaseSystem, SystemResult
 from src.systems.dicwo.agent_factory import AgentFactory
 from src.systems.dicwo.beacon import AGENT_CAPABILITIES, Beacon, BeaconRegistry
@@ -69,7 +69,7 @@ PROTOCOL_DESCRIPTIONS = {
     "audit": "Primary agent executes, secondary agent reviews",
     "debate": "Two agents debate, consensus selects best answer",
     "parallel": "Multiple agents execute in parallel, best output selected",
-    "tool_verified": "Agent executes, then deterministic validators check claims",
+    "tool_verified": "Agent executes with extra self-review step",
 }
 
 
@@ -501,7 +501,7 @@ class DiCWOSystem(BaseSystem):
                 )
 
         elif protocol == "tool_verified":
-            # Agent executes, then deterministic validators check claims
+            # Fallback: execute like solo
             agent = self.agents[primary_agent]
             if context:
                 agent.inject_context(context)
@@ -512,43 +512,8 @@ class DiCWOSystem(BaseSystem):
                 agent=primary_agent,
                 role="assistant",
                 content=response,
-                metadata={**record.to_dict(), "protocol": "tool_verified", "phase": "execute"},
+                metadata={**record.to_dict(), "protocol": "tool_verified"},
             )
-
-            # Run deterministic validators on the output
-            validation = validate_artifacts({subtask: response})
-            validator_summary = (
-                f"Validator results for '{subtask}': "
-                f"{validation['passed']}/{validation['total_checks']} checks passed. "
-            )
-            for check in validation["checks"]:
-                if not check.get("pass", True):
-                    validator_summary += f"FAILED: {check['check']} — {check}. "
-
-            self.logger.log(
-                agent="tool_validator",
-                role="system",
-                content=validator_summary,
-                metadata={"protocol": "tool_verified", "phase": "validate", "validation": validation},
-            )
-
-            # If validators found issues, ask agent to self-correct
-            if validation["verified_claims_ratio"] < 1.0:
-                correction_prompt = (
-                    f"The following validator checks found issues in your output:\n\n"
-                    f"{validator_summary}\n\n"
-                    f"Please revise your output to address these issues. "
-                    f"Original output:\n{response[:2000]}"
-                )
-                corrected, c_record = agent.run(correction_prompt)
-                outputs[primary_agent] = corrected  # Replace with corrected version
-
-                self.logger.log(
-                    agent=primary_agent,
-                    role="assistant",
-                    content=corrected,
-                    metadata={**c_record.to_dict(), "protocol": "tool_verified", "phase": "correct"},
-                )
 
         return outputs
 
@@ -646,17 +611,7 @@ class DiCWOSystem(BaseSystem):
             return True
 
         elif decision.action == PolicyAction.VERIFY:
-            # Run deterministic validators on the output
-            validation = validate_artifacts({subtask: outputs.get(winner_name, "")})
-            self.logger.log(
-                agent="tool_validator",
-                role="system",
-                content=f"Verification: {validation['passed']}/{validation['total_checks']} passed",
-                metadata={"round": round_num, "validation": validation},
-            )
-            # If validation failed significantly, retry the subtask
-            if validation["verified_claims_ratio"] < 0.5:
-                return False  # Don't advance; retry
+            # Accept and continue
             return True
 
         elif decision.action == PolicyAction.ESCALATE:

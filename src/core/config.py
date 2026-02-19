@@ -37,7 +37,6 @@ class ExperimentConfig:
 
     # Evaluation
     run_judge: bool = True
-    run_validators: bool = True
 
     # Metadata
     experiment_name: str = ""
@@ -86,7 +85,6 @@ class ExperimentConfig:
             "system_params": self.system_params,
             "domain": self.domain,
             "run_judge": self.run_judge,
-            "run_validators": self.run_validators,
             "experiment_name": self.experiment_name,
             "description": self.description,
         }

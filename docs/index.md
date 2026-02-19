@@ -36,7 +36,7 @@ This project implements and benchmarks three system designs of increasing comple
 
 - **No frameworks** — built from scratch with the `openai` SDK for full transparency and control.
 - **Provider-agnostic** — works with OpenAI, OpenRouter, or any OpenAI-compatible API. Agents and judge can use different models.
-- **Three-layer evaluation** — LLM-as-a-Judge with rubrics, deterministic physics validators, and auto-generated human scoresheets.
+- **Two-layer evaluation** — LLM-as-a-Judge with rubrics and auto-generated human scoresheets.
 - **Statistical runs** — repeat experiments N times and get mean ± std for all metrics.
 - **Organized results** — every run produces mission reports, metrics, conversation logs, and evaluation scores in a structured folder.
 
@@ -60,7 +60,7 @@ src/
     single_agent/ # System 1
     centralized/  # System 2
     dicwo/        # System 3
-  evaluation/     # Judge, rubrics, validators, scoresheets
+  evaluation/     # Judge, rubrics, scoresheets
   runner/         # Experiment runner, comparison
   analysis/       # Reports, plots
 configs/          # YAML experiment configs
