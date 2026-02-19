@@ -74,6 +74,7 @@ class LLMClient:
     base_url: str | None = None  # None → default OpenAI
     provider: str = "openai"     # "openai" | "openrouter" | custom
     metrics: MetricsCollector = field(default_factory=MetricsCollector)
+    progress_callback: Any | None = None  # callable(event_type, data_dict)
     _client: OpenAI = field(init=False, repr=False)
     _encoding: tiktoken.Encoding = field(init=False, repr=False)
 
@@ -150,5 +151,14 @@ class LLMClient:
             latency_s=latency,
         )
         self.metrics.record_call(record)
+
+        if self.progress_callback is not None:
+            self.progress_callback("llm_call", {
+                "agent": agent_name,
+                "tokens": record.total_tokens,
+                "cost": record.cost_usd,
+                "latency": record.latency_s,
+                "model": model,
+            })
 
         return content, record

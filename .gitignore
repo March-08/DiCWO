@@ -34,3 +34,5 @@ site/
 Dynamic_Agents.pdf
 main-crewAI-ollama-CDF-CXS-5_RAG.py
 audio.txt
+.vercel
+.env*.local

@@ -62,8 +62,10 @@ class ExperimentRunner:
         results_dir: str | Path = "results",
         group_dir: str | Path | None = None,
         run_label: str | None = None,
+        progress_callback: Any | None = None,
     ) -> None:
         self.config = config
+        self.progress_callback = progress_callback
         # api_keys: provider → key mapping. Legacy api_key arg maps to the config's provider.
         self.api_keys: dict[str, str] = dict(api_keys or {})
         if api_key:
@@ -76,6 +78,11 @@ class ExperimentRunner:
         label = run_label or f"{self.timestamp}_{config.system_type}_{config.model}"
         self.run_dir = base / label
 
+    def _emit(self, event_type: str, data: dict[str, Any] | None = None) -> None:
+        """Emit a progress event if a callback is registered."""
+        if self.progress_callback is not None:
+            self.progress_callback(event_type, data or {})
+
     def _make_llm(self) -> LLMClient:
         """Create a fresh LLMClient for the agent provider."""
         api_key = _resolve_api_key(self.config.provider, self.api_keys)
@@ -86,6 +93,7 @@ class ExperimentRunner:
             base_url=self.config.base_url or None,
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
+            progress_callback=self.progress_callback,
         )
 
     def _make_judge_llm(self) -> LLMClient:
@@ -99,16 +107,27 @@ class ExperimentRunner:
             base_url=self.config.effective_judge_base_url or None,
             temperature=0.3,
             max_tokens=self.config.max_tokens,
+            progress_callback=self.progress_callback,
         )
 
     def run(self) -> dict[str, Any]:
         """Execute a single experiment run."""
         llm = self._make_llm()
+        self._emit("system_start", {
+            "system_type": self.config.system_type,
+            "model": self.config.model,
+        })
         print(f"[Experiment] Starting {self.config.system_type} with {self.config.model}")
 
         system = _build_system(self.config, llm)
         result = system.run()
 
+        self._emit("system_complete", {
+            "system_type": self.config.system_type,
+            "num_calls": llm.metrics.num_calls,
+            "total_tokens": llm.metrics.total_tokens,
+            "cost": llm.metrics.total_cost,
+        })
         print(f"[Experiment] System run complete. Saving results...")
 
         self._save_results(result, llm)
@@ -116,6 +135,7 @@ class ExperimentRunner:
 
         evaluation = {}
         if self.config.run_judge:
+            self._emit("judge_start", {"model": self.config.effective_judge_model})
             evaluation.update(self._run_judge(result, llm))
         if self.config.run_validators:
             evaluation.update(self._run_validators(result))
@@ -125,6 +145,10 @@ class ExperimentRunner:
 
         self._generate_metrics_report(result, evaluation, llm)
 
+        self._emit("complete", {
+            "run_dir": str(self.run_dir),
+            "metrics": llm.metrics.to_dict().get("totals", {}),
+        })
         print(f"[Experiment] Results saved to {self.run_dir}")
         return {
             "run_dir": str(self.run_dir),
@@ -154,6 +178,7 @@ class ExperimentRunner:
                 api_keys=self.api_keys,
                 group_dir=self.run_dir,
                 run_label=f"run_{i}",
+                progress_callback=self.progress_callback,
             )
             result = sub_runner.run()
             all_results.append(result)

@@ -1,3 +1,12 @@
+---
+title: DiCWO Mission Design
+emoji: "\U0001f6f0\ufe0f"
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+pinned: false
+---
+
 # DiCWO — Multi-Agent Satellite Mission Design
 
 A framework for comparing three LLM system architectures on a satellite constellation design task. Built from scratch with the OpenAI SDK.
