@@ -384,7 +384,8 @@ if view_mode == "Single Run":
         st.divider()
         st.subheader("Mission Design Report")
         st.caption("The full mission design output rendered as formatted Markdown.")
-        st.markdown(report_text)
+        with st.expander("View Full Report", expanded=False):
+            st.markdown(report_text)
 
     # ── Metrics Report ────────────────────────────────────────
 

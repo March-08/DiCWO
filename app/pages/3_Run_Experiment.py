@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -244,52 +245,49 @@ if st.button(
     _start_run(selected_systems, repeat_count)
     st.rerun()
 
-# ── Live Progress (fragment avoids full-page re-render) ───────
+# ── Live Progress ─────────────────────────────────────────────
 
 if is_running:
     st.divider()
-    st.subheader("Live Progress")
 
     run_types = get("run_system_types", [])
-    st.caption(f"Running: {', '.join(SYSTEM_LABELS.get(s, s) for s in run_types)}")
+    run_label = ", ".join(SYSTEM_LABELS.get(s, s) for s in run_types)
 
-    @st.fragment(run_every=2)
-    def _poll_progress():
-        threads: list[ExperimentThread] = get("run_threads", [])
-        all_events: list[tuple[str, dict[str, Any]]] = list(get("progress_events", []))
+    threads: list[ExperimentThread] = get("run_threads", [])
+    all_events: list[tuple[str, dict[str, Any]]] = list(get("progress_events", []))
 
-        all_done = True
-        results = list(get("run_results", []))
+    all_done = True
+    results = list(get("run_results", []))
 
-        for thread in threads:
-            new_events = thread.drain_events()
-            all_events.extend(new_events)
+    for thread in threads:
+        new_events = thread.drain_events()
+        all_events.extend(new_events)
 
-            if thread.is_running:
-                all_done = False
-            elif thread.done.is_set():
-                if thread.result and thread.result not in results:
-                    results.append(thread.result)
-                if thread.error:
-                    put("run_error", thread.error)
+        if thread.is_running:
+            all_done = False
+        elif thread.done.is_set():
+            if thread.result and thread.result not in results:
+                results.append(thread.result)
+            if thread.error:
+                put("run_error", thread.error)
 
-        put("progress_events", all_events)
-        put("run_results", results)
+    put("progress_events", all_events)
+    put("run_results", results)
 
+    if all_done:
+        put("running", False)
+        if get("run_error"):
+            st.error("One or more runs failed. Check the activity log above for details.")
+        else:
+            st.balloons()
+            st.success(f"All {len(results)} run(s) complete!")
+            st.info("Head to the **Results** page to view the full dashboard with charts and comparisons.")
         render_progress(all_events)
-
-        if all_done:
-            put("running", False)
-            if get("run_error"):
-                st.error("One or more runs failed. Check the activity log above for details.")
-            else:
-                st.balloons()
-                st.success(f"All {len(results)} run(s) complete!")
-                st.info("Head to the **Results** page to view the full dashboard with charts and comparisons.")
-            # Full page rerun to update top-level state (button enabled, etc.)
-            st.rerun()
-
-    _poll_progress()
+    else:
+        with st.status(f"Running: {run_label}...", expanded=True, state="running"):
+            render_progress(all_events)
+        time.sleep(2)
+        st.rerun()
 
 # ── Show last results summary ─────────────────────────────────
 

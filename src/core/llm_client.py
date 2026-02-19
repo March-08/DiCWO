@@ -20,32 +20,40 @@ from src.core.metrics import CallRecord, MetricsCollector
 # For OpenRouter models the prices are approximate — actual cost comes from
 # the x-openrouter-cost header when available.
 _PRICING: dict[str, tuple[float, float]] = {
-    # OpenAI
+    # OpenAI direct
     "gpt-4o":             (2.50, 10.00),
     "gpt-4o-mini":        (0.15,  0.60),
     "gpt-4.1":            (2.00,  8.00),
     "gpt-4.1-mini":       (0.40,  1.60),
     "gpt-4.1-nano":       (0.10,  0.40),
-    # OpenRouter — popular cheap models
-    "meta-llama/llama-4-scout":            (0.15, 0.60),
-    "meta-llama/llama-4-maverick":         (0.20, 0.80),
-    "meta-llama/llama-3.3-70b-instruct":       (0.10, 0.30),
-    "meta-llama/llama-3.3-70b-instruct:free": (0.00, 0.00),
-    "meta-llama/llama-3.1-8b-instruct":       (0.02, 0.05),
-    "google/gemini-2.5-flash-preview":     (0.15, 0.60),
-    "google/gemini-2.5-pro-preview":       (1.25, 10.00),
-    "google/gemini-2.0-flash-001":         (0.10, 0.40),
-    "deepseek/deepseek-chat-v3-0324":      (0.14, 0.28),
-    "deepseek/deepseek-r1":               (0.55, 2.19),
-    "mistralai/mistral-small-3.1-24b-instruct": (0.10, 0.30),
-    "qwen/qwen3-235b-a22b":               (0.20, 0.60),
-    "qwen/qwen3-30b-a3b":                 (0.05, 0.15),
+    "o3":                 (10.00, 40.00),
+    "o4-mini":            (1.10,  4.40),
+    # OpenRouter — frontier / strong models
+    "openai/gpt-5.2-chat":                 (2.00,  8.00),
+    "openai/o3":                           (10.00, 40.00),
+    "openai/o4-mini":                      (1.10,  4.40),
     "anthropic/claude-sonnet-4":           (3.00, 15.00),
+    "anthropic/claude-opus-4":             (15.00, 75.00),
+    "google/gemini-2.5-pro-preview":       (1.25, 10.00),
+    # OpenRouter — mid-tier models
     "openai/gpt-4o":                       (2.50, 10.00),
     "openai/gpt-4o-mini":                  (0.15,  0.60),
     "openai/gpt-4.1":                      (2.00,  8.00),
     "openai/gpt-4.1-mini":                 (0.40,  1.60),
     "openai/gpt-4.1-nano":                 (0.10,  0.40),
+    "google/gemini-2.5-flash-preview":     (0.15, 0.60),
+    "google/gemini-2.0-flash-001":         (0.10, 0.40),
+    "deepseek/deepseek-chat-v3-0324":      (0.14, 0.28),
+    "deepseek/deepseek-r1":               (0.55, 2.19),
+    # OpenRouter — cheap / free models
+    "meta-llama/llama-4-scout":            (0.15, 0.60),
+    "meta-llama/llama-4-maverick":         (0.20, 0.80),
+    "meta-llama/llama-3.3-70b-instruct":       (0.10, 0.30),
+    "meta-llama/llama-3.3-70b-instruct:free": (0.00, 0.00),
+    "meta-llama/llama-3.1-8b-instruct":       (0.02, 0.05),
+    "mistralai/mistral-small-3.1-24b-instruct": (0.10, 0.30),
+    "qwen/qwen3-235b-a22b":               (0.20, 0.60),
+    "qwen/qwen3-30b-a3b":                 (0.05, 0.15),
 }
 
 # Well-known provider base URLs
