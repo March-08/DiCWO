@@ -1,30 +1,30 @@
 """System 3: DiCWO — Distributed Calibration-Weighted Orchestration.
 
-Main orchestration loop matching the paper's pseudocode (Section 5.9):
+Main orchestration loop matching Figure 1 of the paper:
 
   Initialize shared state S_0 from T
   for t = 0..T_max:
-      broadcast S_t (compressed)
-      for each agent: B_i(t) = EmitBeacon(S_t, P_i)
-      Delta*(t) = ConsensusMerge({Decompose(S_t, P_i)})   # consensus decomposition
-      for each subtask T_k in Delta*(t):
-          bids = {bid_{i,k}(t)}
-          (A, G, p) = ConsensusSelect(bids, coalitions)   # team, topology, protocol
-          outputs_k = ExecuteProtocol(A, G, p, S_t)
-          WriteArtifactsToMemory(outputs_k)
-      Gamma_t = CheckpointSignals(S_t, new_artifacts)
-      action = pi(Gamma_t, budgets)
-      if action == HITL: ...
-      if action == CREATE_AGENT: ...
-      UpdateCalibrationReputationSynergy(S_t, outcomes)
-      if AcceptanceCriteriaMet(S_t): break
+      compressed = compress_state(S_t)
+      broadcast beacons (compressed S_t)
+      optional re-decomposition
+      for each pending subtask T_k:
+          bids = compute_bids(T_k)
+          coalitions = propose_coalitions(T_k)
+          (A, G, p) = joint_consensus_select(coalitions)
+          outputs_k = execute(T_k, A[0], p, A)
+      signals_map = checkpoint_iteration(outputs)
+      decision = apply_policy_iteration(signals_map)
+      handle_policy_v2(decision)
+      maybe_spawn_agents()
+      update calibration, reputation, synergy
+      if acceptance_met(): break
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from src.core.agent import AgentIdentity, BaseAgent
+from src.core.agent import BaseAgent
 from src.core.config import ExperimentConfig
 from src.core.llm_client import LLMClient
 from src.domain.prompts import (
@@ -40,7 +40,6 @@ from src.systems.dicwo.beacon import AGENT_CAPABILITIES, Beacon, BeaconRegistry
 from src.systems.dicwo.bidding import BiddingEngine
 from src.systems.dicwo.checkpoint import CheckpointEvaluator, CheckpointSignals
 from src.systems.dicwo.consensus import ConsensusEngine
-from src.systems.dicwo.hitl import HITLManager
 from src.systems.dicwo.policy import PolicyAction, PolicyEngine
 from src.systems.dicwo.topology import TopologyGraph
 
@@ -74,17 +73,15 @@ PROTOCOL_DESCRIPTIONS = {
 
 
 class DiCWOSystem(BaseSystem):
-    """Full DiCWO distributed orchestration system.
+    """Full DiCWO distributed orchestration system (Figure 1).
 
-    Matches the paper's main loop with all mechanisms:
-    - Consensus-based task decomposition
-    - 4-term calibration-weighted bidding
-    - ConsensusSelect for protocol
+    Iteration-level processing with:
+    - Consensus-based task decomposition (with re-decomposition)
+    - 4-term calibration-weighted bidding + coalition proposals
+    - Joint ConsensusSelect for (team, topology, protocol)
     - Checkpoint signals with 4 dimensions
-    - Policy engine with 7 actions
-    - HITL with EVoI and budget
-    - Agent factory with credentialing
-    - Subtask revisiting on failure
+    - Simplified 3-action policy (Continue / Rewire / Stop)
+    - Spawn via dual trigger (coverage gap + persistent failure)
     - Acceptance criteria for early exit
     - Reputation and synergy tracking
     """
@@ -132,142 +129,164 @@ class DiCWOSystem(BaseSystem):
             default_ttl=params.get("agent_ttl_rounds", 5),
             credential_threshold=params.get("credential_threshold", 0.5),
         )
-        self.hitl = HITLManager(
-            evoi_threshold=params.get("hitl_evoi_threshold", 0.7),
-            max_calls=params.get("max_hitl_calls", 3),
-        )
         self.topology = TopologyGraph.from_agents(
             list(self.agents.keys()), topology="full"
         )
+
+        # Failure tracking for spawn trigger
+        self.failure_tracker: dict[str, int] = {}  # subtask → consecutive failures
+        self.coverage_gap_log: list[str] = []  # subtasks with no capable agents
 
         # Max retries for a failed subtask before moving on
         self.max_retries = params.get("max_subtask_retries", 1)
 
     def run(self) -> SystemResult:
-        """Main DiCWO orchestration loop (paper Section 5.9 pseudocode)."""
+        """Main DiCWO iteration-level loop (Figure 1)."""
         max_rounds = self.config.max_rounds
         completed_subtasks: list[str] = []
-        retry_counts: dict[str, int] = {}
         round_num = 0
         early_stop = False
+        last_rewire_round = 0
 
         # Phase 0: Consensus-based task decomposition
         subtask_queue = self._consensus_decomposition(completed_subtasks)
         print(f"  [DiCWO] Consensus subtask order: {subtask_queue}")
 
-        while subtask_queue and round_num < max_rounds:
-            subtask = subtask_queue[0]
+        while round_num < max_rounds:
             round_num += 1
-            print(f"  [DiCWO] Round {round_num}/{max_rounds} — subtask: {subtask}")
+            pending = [s for s in subtask_queue if s not in completed_subtasks]
+            if not pending:
+                break
 
-            # Phase 1: Broadcast beacons (paper: EmitBeacon)
-            self._broadcast_beacons(round_num)
+            print(f"  [DiCWO] Iteration {round_num}/{max_rounds} — pending: {pending}")
 
-            # Anti-gaming: down-weight unsupported beacons
+            # Step 1: Compress state to bound context growth
+            compressed = self._compress_state()
+
+            # Step 2: Broadcast beacons with compressed state
+            self._broadcast_beacons(round_num, compressed)
             self.registry.downweight_unsupported()
 
-            # Phase 2: Bidding (paper: bid_{i,k}(t) = alpha*fit - beta*cal - gamma*cost + delta*div)
-            bids = self.bidding.compute_bids(subtask, self.registry)
-            winner_name = self.bidding.assign(subtask, self.registry)
-            if winner_name is None:
-                print(f"  [DiCWO] No agent available for {subtask}, skipping")
-                subtask_queue.pop(0)
-                continue
+            # Step 3: Optional re-decomposition
+            if self._should_redecompose(round_num, last_rewire_round):
+                subtask_queue = self._consensus_decomposition(completed_subtasks)
+                pending = [s for s in subtask_queue if s not in completed_subtasks]
+                print(f"  [DiCWO] Re-decomposed subtask order: {subtask_queue}")
 
-            # Get coalition (top-2 agents for the subtask)
-            coalition = self.bidding.get_top_k(subtask, self.registry, k=2)
+            # Step 4: Process each pending subtask
+            iteration_outputs: dict[str, dict[str, str]] = {}
+            iteration_teams: dict[str, list[str]] = {}
 
-            self.logger.log(
-                agent="DiCWO",
-                role="bidding",
-                content=(
-                    f"Assigned '{subtask}' to {winner_name} "
-                    f"(coalition: {coalition}, bids: {[b.to_dict() for b in bids[:3]]})"
-                ),
-                metadata={"round": round_num},
-            )
+            for subtask in pending:
+                # 4a. Compute bids
+                bids = self.bidding.compute_bids(subtask, self.registry)
+                if not bids:
+                    self.coverage_gap_log.append(subtask)
+                    print(f"  [DiCWO] No bids for {subtask}, logging coverage gap")
+                    continue
 
-            # Phase 3: ConsensusSelect for protocol (paper: distributed consensus on protocol)
-            protocol = self._consensus_select_protocol(subtask, winner_name, round_num)
+                # 4b. Propose coalitions
+                coalitions = self.bidding.propose_coalitions(subtask, self.registry)
 
-            self.logger.log(
-                agent="DiCWO",
-                role="consensus",
-                content=f"Protocol: {protocol}",
-                metadata={"round": round_num},
-            )
+                self.logger.log(
+                    agent="DiCWO",
+                    role="bidding",
+                    content=(
+                        f"Bids for '{subtask}': {[b.to_dict() for b in bids[:3]]}; "
+                        f"Coalitions: {[c.to_dict() for c in coalitions[:3]]}"
+                    ),
+                    metadata={"round": round_num},
+                )
 
-            # Phase 4: Execute protocol
-            outputs = self._execute(subtask, winner_name, protocol, coalition)
+                # 4c. Joint consensus select (team, topology, protocol)
+                coalition_options = [
+                    {"label": f"coalition_{i}", "members": c.members}
+                    for i, c in enumerate(coalitions)
+                ]
+                team, topo, protocol = self._joint_consensus_select(
+                    subtask, coalition_options, round_num
+                )
 
-            # Phase 5: Checkpoint signals
-            signals = self._checkpoint(subtask, outputs, round_num)
+                self.logger.log(
+                    agent="DiCWO",
+                    role="consensus",
+                    content=f"Joint select: team={team}, topology={topo}, protocol={protocol}",
+                    metadata={"round": round_num, "subtask": subtask},
+                )
 
-            self.logger.log(
-                agent="DiCWO",
-                role="checkpoint",
-                content=f"Signals: {signals.to_dict()}",
-                metadata={"round": round_num},
-            )
+                # Apply topology
+                if topo == "full":
+                    self.topology.set_fully_connected()
+                elif topo == "star":
+                    self.topology.set_star(STUDY_MANAGER.name)
 
-            # Phase 6: Policy decision
-            decision = self._apply_policy(signals, subtask, round_num, max_rounds)
+                # 4d. Execute
+                primary = team[0] if team else bids[0].agent_name
+                outputs = self._execute(subtask, primary, protocol, team)
+                iteration_outputs[subtask] = outputs
+                iteration_teams[subtask] = team
+
+            # Step 5: Checkpoint all subtask outputs
+            signals_map = self._checkpoint_iteration(iteration_outputs, round_num)
+
+            # Step 6: Aggregate signals → policy decision
+            decision = self._apply_policy_iteration(signals_map, round_num, max_rounds)
 
             self.logger.log(
                 agent="DiCWO",
                 role="policy",
-                content=f"Decision: {decision.to_dict()}",
+                content=f"Iteration decision: {decision.to_dict()}",
                 metadata={"round": round_num},
             )
 
-            # Handle policy actions
-            should_advance = self._handle_policy(
-                decision, signals, subtask, round_num, outputs, winner_name
-            )
+            # Step 7: Handle policy (Continue/Rewire/Stop)
+            self._handle_policy_v2(decision)
+            if decision.action == PolicyAction.REWIRE:
+                last_rewire_round = round_num
 
-            if decision.action == PolicyAction.STOP:
-                early_stop = True
-                # Still store the output before stopping
-                self._store_output(subtask, outputs, winner_name)
+            # Step 8: Maybe spawn agents (dual trigger)
+            self._maybe_spawn_agents(round_num)
+
+            # Step 9: Store outputs, update trust
+            for subtask, outputs in iteration_outputs.items():
+                signals = signals_map.get(subtask)
+                team = iteration_teams.get(subtask, [])
+                primary = team[0] if team else next(iter(outputs), "unknown")
+
+                self._store_output(subtask, outputs, primary)
                 completed_subtasks.append(subtask)
-                subtask_queue.pop(0)
-                print("  [DiCWO] Acceptance criteria met — early stop")
-                break
 
-            if should_advance:
-                # Store output and advance to next subtask
-                self._store_output(subtask, outputs, winner_name)
-                completed_subtasks.append(subtask)
-                subtask_queue.pop(0)
-
-                # Add evidence to winner's beacon (for anti-gaming)
-                beacon = self.registry.beacons.get(winner_name)
+                # Add evidence to primary's beacon
+                beacon = self.registry.beacons.get(primary)
                 if beacon:
                     beacon.evidence.append(f"completed:{subtask}:round{round_num}")
-            else:
-                # Subtask failed checkpoint — retry or skip
-                retry_counts[subtask] = retry_counts.get(subtask, 0) + 1
-                if retry_counts[subtask] > self.max_retries:
-                    print(f"  [DiCWO] Max retries for {subtask}, accepting current output")
-                    self._store_output(subtask, outputs, winner_name)
-                    completed_subtasks.append(subtask)
-                    subtask_queue.pop(0)
-                else:
-                    print(f"  [DiCWO] Retrying {subtask} (attempt {retry_counts[subtask]})")
 
-            # UpdateCalibrationReputationSynergy (paper Section 5.9)
-            success = signals.risk < 0.5
-            quality = 1.0 - signals.risk
-            self.bidding.update_calibration(winner_name, self.registry, success)
-            self.bidding.update_reputation(winner_name, quality)
-            if len(coalition) >= 2:
-                self.bidding.update_synergy(coalition[0], coalition[1], quality)
+                # Update calibration, reputation, synergy
+                if signals:
+                    success = signals.risk < 0.5
+                    quality = 1.0 - signals.risk
+                    self.bidding.update_calibration(primary, self.registry, success)
+                    self.bidding.update_reputation(primary, quality)
+                    if len(team) >= 2:
+                        self.bidding.update_synergy(team[0], team[1], quality)
+
+                    # Track failures for spawn trigger
+                    if signals.risk >= 0.5:
+                        self.failure_tracker[subtask] = self.failure_tracker.get(subtask, 0) + 1
+                    else:
+                        self.failure_tracker[subtask] = 0
 
             # Cleanup expired spawned agents
             removed = self.factory.cleanup_expired(round_num)
             for name in removed:
                 self.agents.pop(name, None)
                 self.topology.remove_node(name)
+
+            # Step 10: Check acceptance
+            if decision.action == PolicyAction.STOP or self._acceptance_met():
+                early_stop = True
+                print("  [DiCWO] Acceptance criteria met — early stop")
+                break
 
         # Final integration if not already done
         if "integration" not in completed_subtasks and not early_stop:
@@ -282,7 +301,6 @@ class DiCWOSystem(BaseSystem):
                 "rounds_used": round_num,
                 "completed_subtasks": completed_subtasks,
                 "early_stop": early_stop,
-                "hitl": self.hitl.to_dict(),
                 "spawned_agents": self.factory.to_dict(),
                 "topology": self.topology.to_dict(),
                 "reputation": dict(self.bidding.reputation),
@@ -290,6 +308,8 @@ class DiCWOSystem(BaseSystem):
                     k: dict(v) for k, v in self.bidding.synergy.items()
                 },
                 "subtask_quality": dict(self.policy.subtask_quality),
+                "coverage_gaps": self.coverage_gap_log,
+                "failure_tracker": dict(self.failure_tracker),
             },
         )
 
@@ -314,8 +334,11 @@ class DiCWOSystem(BaseSystem):
             context=context,
         )
 
-    def _broadcast_beacons(self, round_num: int) -> None:
-        """All agents broadcast their capabilities (paper: EmitBeacon)."""
+    def _broadcast_beacons(self, round_num: int, compressed: str = "") -> None:
+        """All agents broadcast their capabilities (paper: EmitBeacon).
+
+        Agents receive compressed S_t as part of beacon context.
+        """
         for name, agent in self.agents.items():
             caps = AGENT_CAPABILITIES.get(name, [])
             # Check spawned agents
@@ -339,46 +362,183 @@ class DiCWOSystem(BaseSystem):
                 evidence=existing.evidence if existing else [],
                 evidence_weight=existing.evidence_weight if existing else 1.0,
                 needs=self._infer_needs(name),
-                estimated_cost=0.3,  # Default; could be dynamic
+                estimated_cost=0.3,
             )
             self.registry.register(beacon)
 
-    def _consensus_select_protocol(
+        # Inject compressed state into agents if available
+        if compressed:
+            for agent in self.agents.values():
+                agent.inject_context(compressed)
+
+    def _compress_state(self) -> str:
+        """Truncate artifacts to bound context growth (3000 chars total)."""
+        if not self.state.artifacts:
+            return ""
+
+        summary = self.state.get_context_summary()
+        if len(summary) <= 3000:
+            return summary
+        return summary[:3000] + "\n... [truncated]"
+
+    def _joint_consensus_select(
         self,
         subtask: str,
-        primary_agent: str,
+        coalition_options: list[dict[str, Any]],
         round_num: int,
-    ) -> str:
-        """Paper: ConsensusSelect — distributed consensus on execution protocol.
-
-        Uses lightweight consensus (3 voters) to select protocol.
-        For round 1, use heuristic to avoid costly consensus on first pass.
-        """
-        if round_num <= 1 and subtask in ("market_analysis",):
-            # First subtask is low-risk, skip consensus overhead
-            return "solo"
-
-        # Get recent disagreement level
-        prev_disagreement = 0.0
-        if self.policy.subtask_quality:
-            last_quality = list(self.policy.subtask_quality.values())[-1]
-            prev_disagreement = 1.0 - last_quality
-
+    ) -> tuple[list[str], str, str]:
+        """Dispatch to consensus engine for joint (team, topology, protocol) selection."""
         context = self.state.get_context_summary() if self.state.artifacts else ""
-        criticality = SUBTASK_CRITICALITY.get(subtask, "medium")
 
-        # Use a subset of agents for efficiency (paper allows any subset)
-        voter_names = list(self.agents.keys())[:3]
-        voters = {n: self.agents[n] for n in voter_names if n in self.agents}
-
-        return self.consensus.consensus_select_protocol(
+        return self.consensus.joint_consensus_select(
             subtask=subtask,
-            primary_agent=primary_agent,
-            agents=voters,
+            coalitions=coalition_options,
+            agents=self.agents,
             context=context,
-            criticality=criticality,
-            disagreement=prev_disagreement,
         )
+
+    def _checkpoint_iteration(
+        self,
+        iteration_outputs: dict[str, dict[str, str]],
+        round_num: int,
+    ) -> dict[str, CheckpointSignals]:
+        """Run checkpoint over all subtask outputs for this iteration."""
+        reviewer = self.agents.get(STUDY_MANAGER.name)
+        if reviewer is None:
+            reviewer = BaseAgent(identity=STUDY_MANAGER, llm=self.llm)
+
+        signals_map: dict[str, CheckpointSignals] = {}
+        for subtask, outputs in iteration_outputs.items():
+            signals = self.checkpoint_eval.evaluate(subtask, outputs, reviewer)
+            signals_map[subtask] = signals
+
+            self.logger.log(
+                agent="DiCWO",
+                role="checkpoint",
+                content=f"Checkpoint [{subtask}]: {signals.to_dict()}",
+                metadata={"round": round_num, "subtask": subtask},
+            )
+
+        return signals_map
+
+    def _apply_policy_iteration(
+        self,
+        signals_map: dict[str, CheckpointSignals],
+        round_num: int,
+        max_rounds: int,
+    ) -> Any:
+        """Aggregate signals (worst-case) then call policy.
+
+        Takes the worst signal across all subtasks in this iteration.
+        """
+        if not signals_map:
+            return self.policy.decide(
+                signals=CheckpointSignals(
+                    disagreement=0.0, uncertainty=0.5,
+                    verifiability=0.5, risk=0.3,
+                ),
+                round_num=round_num,
+                max_rounds=max_rounds,
+            )
+
+        # Worst-case aggregation across subtasks
+        worst = CheckpointSignals(
+            disagreement=max(s.disagreement for s in signals_map.values()),
+            uncertainty=max(s.uncertainty for s in signals_map.values()),
+            verifiability=min(s.verifiability for s in signals_map.values()),
+            risk=max(s.risk for s in signals_map.values()),
+        )
+
+        # Track per-subtask quality in policy engine
+        for subtask, signals in signals_map.items():
+            quality = 1.0 - signals.risk
+            self.policy.subtask_quality[subtask] = quality
+
+        return self.policy.decide(
+            signals=worst,
+            round_num=round_num,
+            max_rounds=max_rounds,
+        )
+
+    def _handle_policy_v2(self, decision: Any) -> None:
+        """Simplified policy handler: Continue (noop), Rewire, Stop."""
+        if decision.action == PolicyAction.REWIRE:
+            target = decision.params.get("target_topology", "full")
+            if target == "full":
+                self.topology.set_fully_connected()
+            elif target == "star":
+                self.topology.set_star(STUDY_MANAGER.name)
+            self.logger.log(
+                agent="DiCWO",
+                role="rewire",
+                content=f"Topology rewired to {target}",
+                metadata={},
+            )
+        # CONTINUE and STOP are no-ops here (STOP handled in caller)
+
+    def _maybe_spawn_agents(self, round_num: int) -> None:
+        """Dual trigger spawn: coverage gaps + persistent failures (>=2 consecutive).
+
+        Coverage gap: subtask had no capable agents during bidding.
+        Persistent failure: subtask failed checkpoint >= 2 consecutive times.
+        """
+        spawn_reasons: list[tuple[list[str], str]] = []
+
+        # Trigger 1: Coverage gaps from bidding
+        if self.coverage_gap_log:
+            # Deduplicate
+            unique_gaps = list(dict.fromkeys(self.coverage_gap_log))
+            for gap in unique_gaps:
+                spawn_reasons.append(
+                    ([gap], f"Coverage gap: no capable agents for '{gap}'")
+                )
+            self.coverage_gap_log.clear()
+
+        # Trigger 2: Persistent failures (>= 2 consecutive)
+        for subtask, count in self.failure_tracker.items():
+            if count >= 2:
+                spawn_reasons.append(
+                    ([subtask], f"Persistent failure: '{subtask}' failed {count} times")
+                )
+
+        for capabilities, reason in spawn_reasons:
+            agent = self.factory.spawn(capabilities, reason, round_num)
+            if agent:
+                self.agents[agent.name] = agent
+                self.topology.add_node(agent.name)
+                self.topology.set_fully_connected()
+                self.registry.register(Beacon(
+                    agent_name=agent.name,
+                    capabilities=capabilities,
+                    confidence=0.7,
+                    round_num=round_num,
+                ))
+                self.policy.record_spawn()
+                self.logger.log(
+                    agent="DiCWO",
+                    role="factory",
+                    content=f"Spawned agent: {agent.name} for {reason}",
+                    metadata={"round": round_num},
+                )
+
+    def _should_redecompose(self, round_num: int, last_rewire_round: int) -> bool:
+        """Heuristic: re-decompose every 3 rounds or right after a rewire."""
+        if round_num > 1 and round_num == last_rewire_round + 1:
+            return True
+        if round_num > 1 and round_num % 3 == 0:
+            return True
+        return False
+
+    def _acceptance_met(self) -> bool:
+        """Check quality across completed subtasks.
+
+        Delegates to policy engine's acceptance criteria.
+        """
+        return self.policy._acceptance_criteria_met()
+
+    # ------------------------------------------------------------------
+    # Execution and storage (unchanged)
+    # ------------------------------------------------------------------
 
     def _execute(
         self,
@@ -516,113 +676,6 @@ class DiCWOSystem(BaseSystem):
             )
 
         return outputs
-
-    def _checkpoint(
-        self,
-        subtask: str,
-        outputs: dict[str, str],
-        round_num: int,
-    ) -> CheckpointSignals:
-        """Evaluate outputs and compute checkpoint signals."""
-        reviewer = self.agents.get(STUDY_MANAGER.name)
-        if reviewer is None:
-            reviewer = BaseAgent(identity=STUDY_MANAGER, llm=self.llm)
-
-        return self.checkpoint_eval.evaluate(subtask, outputs, reviewer)
-
-    def _apply_policy(
-        self,
-        signals: CheckpointSignals,
-        subtask: str,
-        round_num: int,
-        max_rounds: int,
-    ) -> Any:
-        """Apply policy engine to decide next action."""
-        available_caps = set()
-        for beacon in self.registry.all_beacons():
-            available_caps.update(beacon.capabilities)
-
-        needed_caps = set(TASK_DESCRIPTIONS.keys())
-
-        return self.policy.decide(
-            signals=signals,
-            round_num=round_num,
-            max_rounds=max_rounds,
-            available_capabilities=available_caps,
-            needed_capabilities=needed_caps,
-            subtask=subtask,
-        )
-
-    def _handle_policy(
-        self,
-        decision: Any,
-        signals: CheckpointSignals,
-        subtask: str,
-        round_num: int,
-        outputs: dict[str, str],
-        winner_name: str,
-    ) -> bool:
-        """Handle a policy decision. Returns True if subtask should advance."""
-
-        if decision.action == PolicyAction.HITL:
-            # Record HITL budget usage
-            self.policy.record_hitl()
-            q = self.hitl.generate_question(
-                subtask, signals, self.state.get_context_summary()
-            )
-            self.logger.log(
-                agent="DiCWO",
-                role="hitl",
-                content=f"HITL question: {q.question}",
-                metadata={"round": round_num, "evoi": q.evoi, "budget_remaining": self.hitl.budget_remaining},
-            )
-            # Auto-respond in experiment mode (no real human)
-            self.hitl.record_response(len(self.hitl.questions) - 1, "continue")
-            return True  # Advance despite HITL (in automated mode)
-
-        elif decision.action == PolicyAction.SPAWN:
-            missing = decision.params.get("missing_capabilities", [])
-            agent = self.factory.spawn(missing, decision.reason, round_num)
-            if agent:
-                self.agents[agent.name] = agent
-                self.topology.add_node(agent.name)
-                self.topology.set_fully_connected()
-                self.registry.register(Beacon(
-                    agent_name=agent.name,
-                    capabilities=missing,
-                    confidence=0.7,
-                    round_num=round_num,
-                ))
-                self.policy.record_spawn()
-                self.logger.log(
-                    agent="DiCWO",
-                    role="factory",
-                    content=f"Spawned agent: {agent.name} (credentialed)",
-                    metadata={"round": round_num},
-                )
-            return True
-
-        elif decision.action == PolicyAction.REWIRE:
-            target = decision.params.get("target_topology", "full")
-            if target == "full":
-                self.topology.set_fully_connected()
-            elif target == "star":
-                self.topology.set_star(STUDY_MANAGER.name)
-            return True
-
-        elif decision.action == PolicyAction.VERIFY:
-            # Accept and continue
-            return True
-
-        elif decision.action == PolicyAction.ESCALATE:
-            # Log escalation; in experiment mode, continue anyway
-            return True
-
-        elif decision.action == PolicyAction.STOP:
-            return True  # Handled in caller
-
-        # CONTINUE
-        return True
 
     def _store_output(
         self,

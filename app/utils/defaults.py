@@ -82,9 +82,9 @@ DICWO_PARAM_DEFAULTS: dict[str, dict] = {
         "uncertainty_threshold": {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05, "help": "Triggers escalate if exceeded"},
         "risk_threshold": {"default": 0.6, "min": 0.0, "max": 1.0, "step": 0.05, "help": "Combined risk threshold"},
     },
-    "HITL Budget": {
-        "hitl_evoi_threshold": {"default": 0.7, "min": 0.0, "max": 1.0, "step": 0.05, "help": "Expected Value of Information threshold"},
-        "max_hitl_calls": {"default": 3, "min": 0, "max": 10, "step": 1, "help": "Max human-in-the-loop interventions"},
+    "Legacy Thresholds": {
+        "hitl_evoi_threshold": {"default": 0.7, "min": 0.0, "max": 1.0, "step": 0.05, "help": "EVoI threshold (legacy, kept for backward compatibility)"},
+        "max_hitl_calls": {"default": 3, "min": 0, "max": 10, "step": 1, "help": "Max HITL calls (legacy, kept for backward compatibility)"},
     },
     "Policy": {
         "acceptance_quality": {"default": 0.7, "min": 0.0, "max": 1.0, "step": 0.05, "help": "Min quality to trigger early stop"},

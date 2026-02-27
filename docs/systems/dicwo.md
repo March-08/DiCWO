@@ -1,48 +1,53 @@
 # System 3: DiCWO
 
-**Distributed Calibration-Weighted Orchestration** — the proposed system. Agents self-organize through a multi-phase loop with adaptive policies, matching the paper's pseudocode (Section 5.9).
+**Distributed Calibration-Weighted Orchestration** — the proposed system. Agents self-organize through an iteration-level loop with coalition proposals, joint consensus, and a simplified adaptive policy (Figure 1).
 
 ## Architecture
 
 ```mermaid
 graph LR
     D[Consensus<br/>Decomposition] --> B[Beacons]
-    B --> Bi[Bidding]
-    Bi --> CS[ConsensusSelect<br/>Protocol]
+    B --> Bi[Bidding +<br/>Coalition Proposals]
+    Bi --> CS[Joint ConsensusSelect<br/>Team + Topology + Protocol]
     CS --> E[Execution]
     E --> Ch[Checkpoint]
     Ch --> P[Policy]
     P -->|continue| B
     P -->|rewire| T[Topology]
-    P -->|spawn| F[Agent Factory]
-    P -->|hitl| H[Human-in-the-Loop]
     P -->|stop| S[Accept & Stop]
+    Ch -->|coverage gap /<br/>persistent failure| F[Agent Factory]
 ```
 
-## Main Loop (Paper Pseudocode)
+## Main Loop (Figure 1)
 
 ```
 Initialize shared state S_0 from T
 subtasks = ConsensusMerge({Decompose(S_t, P_i)})
 
 for t = 0..T_max:
-    broadcast S_t
-    for each agent: EmitBeacon(S_t, P_i)
-    for each subtask T_k:
-        bids = {bid_{i,k}(t)}
-        (team, topology, protocol) = ConsensusSelect(bids)
-        outputs_k = ExecuteProtocol(team, topology, protocol, S_t)
-    Gamma_t = CheckpointSignals(S_t, outputs)
-    action = Policy(Gamma_t, budgets)
-    UpdateCalibrationReputationSynergy()
-    if AcceptanceCriteriaMet(S_t): break
+    compressed = compress_state(S_t)
+    broadcast beacons (compressed S_t)
+    optional re-decomposition (every 3 rounds or after rewire)
+    for each pending subtask T_k:
+        bids = compute_bids(T_k)
+        coalitions = propose_coalitions(T_k)
+        (A, G, p) = joint_consensus_select(coalitions)
+        outputs_k = execute(T_k, A[0], p, A)
+    signals_map = checkpoint_iteration(outputs)
+    decision = policy(aggregate(signals_map))
+    handle_policy(decision)            # Continue / Rewire / Stop
+    maybe_spawn_agents()               # dual trigger: coverage gap + persistent failure
+    update_calibration_reputation_synergy()
+    if acceptance_met(): break
 ```
+
+The loop processes **all pending subtasks per iteration** (not one at a time), then makes a single aggregate policy decision.
 
 ## The Phases
 
 ### 0. Consensus-Based Task Decomposition
 
-Before the main loop, agents propose subtask orderings via `ConsensusMerge({Decompose()})`. Each agent suggests an ordering based on their expertise; orderings are merged via **Borda count** (ranked voting).
+Before the main loop (and optionally re-triggered every 3 rounds or after a rewire), agents propose subtask orderings via `ConsensusMerge({Decompose()})`. Each agent suggests an ordering based on their expertise; orderings are merged via **Borda count** (ranked voting).
 
 :material-file-code: `src/systems/dicwo/consensus.py` — `decompose_and_merge()`
 
@@ -62,9 +67,11 @@ Each agent broadcasts an enhanced beacon containing:
 
 **Anti-gaming**: Beacons with no evidence get their `evidence_weight` progressively down-weighted.
 
+**Context compression**: Before broadcasting, shared state is compressed (truncated to 3000 chars) to bound context growth across iterations.
+
 :material-file-code: `src/systems/dicwo/beacon.py`
 
-### 2. Bidding
+### 2. Bidding + Coalition Proposals
 
 The paper's 4-term bidding formula:
 
@@ -81,13 +88,28 @@ $$
 
 Plus a small **reputation** bonus tracked via exponential moving average.
 
-**Coalitions**: The top-k bidders form a coalition (used for audit/debate protocols).
+**Coalition Proposals**: After computing bids, the bidding engine generates candidate micro-coalitions from the top 3-4 bidders:
+
+| Coalition Type | When | Description |
+|---------------|------|-------------|
+| **Solo** | Always | Top-1 bidder alone |
+| **Proposer-Critic** | Large score gap (> 0.3) | Stronger agent leads, weaker verifies |
+| **Solver-Verifier** | Medium gap (> 0.1) | Complementary roles |
+| **Parallel-Independent** | Similar scores | Both agents execute independently |
+
+Coalitions are scored by `combined_fit + 0.2 * synergy_score`.
 
 :material-file-code: `src/systems/dicwo/bidding.py`
 
-### 3. ConsensusSelect
+### 3. Joint ConsensusSelect
 
-Agents vote on the execution protocol via distributed consensus. Available protocols:
+Agents vote on **three decisions simultaneously** via `joint_consensus_select()`:
+
+1. **Team (A)** — which coalition should execute
+2. **Topology (G)** — communication structure (`full`, `star`, `ring`)
+3. **Protocol (p)** — execution strategy (`solo`, `audit`, `debate`, `parallel`, `tool_verified`)
+
+Three voters cast votes on the triple; votes are tallied **per dimension** weighted by confidence.
 
 | Protocol | Description |
 |----------|-------------|
@@ -97,9 +119,7 @@ Agents vote on the execution protocol via distributed consensus. Available proto
 | **Parallel** | Multiple agents execute independently, best merged |
 | **Tool-verified** | Agent executes, then a second pass verifies the result |
 
-Votes are weighted by confidence. The consensus considers subtask criticality and previous disagreement levels.
-
-:material-file-code: `src/systems/dicwo/consensus.py` — `consensus_select_protocol()`
+:material-file-code: `src/systems/dicwo/consensus.py` — `joint_consensus_select()`
 
 ### 4. Execution
 
@@ -107,7 +127,7 @@ The selected protocol runs according to the chosen strategy (solo, audit, debate
 
 ### 5. Checkpoint
 
-After execution, outputs are evaluated for four signals:
+After execution, outputs from **all subtasks in the iteration** are evaluated for four signals:
 
 | Signal | Measures | Range |
 |--------|----------|-------|
@@ -116,33 +136,40 @@ After execution, outputs are evaluated for four signals:
 | **Verifiability** | Fraction of claims that can be checked | 0-1 |
 | **Risk** | Weighted combination: `0.4*disagree + 0.3*uncert + 0.3*(1-verif)` | 0-1 |
 
+Signals are aggregated across subtasks using **worst-case**: highest disagreement, highest uncertainty, lowest verifiability, highest risk.
+
 :material-file-code: `src/systems/dicwo/checkpoint.py`
 
-### 6. Policy
+### 6. Policy (3 actions)
 
-Based on checkpoint signals, the policy engine decides (in priority order):
+Based on the aggregated checkpoint signals, the policy engine decides:
 
 | Decision | Trigger | Action |
 |----------|---------|--------|
 | **Stop** | All subtasks above quality threshold | Accept results and exit early |
-| **HITL** | High risk + high EVoI + budget remaining | Flag for human review |
-| **Verify** | Low verifiability + uncertainty | Request additional verification |
-| **Spawn** | Capability gap detected | Create new credentialed specialist |
-| **Rewire** | High disagreement | Change communication topology |
-| **Escalate** | High uncertainty | Request additional review |
-| **Continue** | Signals within bounds | Proceed to next subtask |
+| **Rewire** | High disagreement or uncertainty | Change communication topology |
+| **Continue** | Signals within bounds | Proceed to next iteration |
 
-**HITL Budget**: Limited to N calls per session (default 3).
+Agent spawning is handled separately (see below), not by the policy engine.
 
-**Acceptance Criteria**: `AcceptanceCriteriaMet()` checks if all tracked subtasks are above the quality threshold, enabling early loop termination.
-
-**Subtask Revisiting**: If checkpoint signals are too poor, the subtask is retried (up to `max_subtask_retries`) before moving on.
+**Acceptance Criteria**: `acceptance_met()` checks if all tracked subtasks are above the quality threshold (default 0.7), enabling early loop termination.
 
 :material-file-code: `src/systems/dicwo/policy.py`
 
-### 7. Update Calibration, Reputation & Synergy
+### 7. Agent Spawning (Dual Trigger)
 
-After each subtask, three quantities are updated:
+Agent spawning is decoupled from the policy and triggered by two conditions:
+
+1. **Coverage gap** — a subtask had no capable bidders during the bidding phase
+2. **Persistent failure** — a subtask failed checkpoint >= 2 consecutive times
+
+Spawned agents go through credentialing (entrance micro-task) and have a TTL.
+
+:material-file-code: `src/systems/dicwo/agent_factory.py`
+
+### 8. Update Calibration, Reputation & Synergy
+
+After each iteration, three quantities are updated for all agents involved:
 
 - **Calibration**: Exponential decay on failure, recovery on success
 - **Reputation**: Running average of output quality per agent
@@ -158,13 +185,13 @@ A directed communication graph between agents. Supports three layouts:
 - **Star** — all communication goes through a center node
 - **Ring** — each agent connects to the next in sequence
 
-The policy engine can **rewire** the topology when disagreement is high.
+The policy engine can **rewire** the topology when disagreement or uncertainty is high.
 
 :material-file-code: `src/systems/dicwo/topology.py`
 
 ### Agent Factory
 
-When the policy detects a **capability gap**, the factory synthesizes a new specialist with **credentialing**:
+When a **coverage gap** or **persistent failure** is detected, the factory synthesizes a new specialist with **credentialing**:
 
 1. Uses the LLM to generate a role description
 2. Runs an **entrance micro-task** (domain-specific question)
@@ -174,17 +201,22 @@ When the policy detects a **capability gap**, the factory synthesizes a new spec
 
 :material-file-code: `src/systems/dicwo/agent_factory.py`
 
-### Human-in-the-Loop
+## Metadata Output
 
-Computes the **Expected Value of Information** (EVoI) to decide when human input is worth requesting:
+Each DiCWO run produces metadata including:
 
-$$
-\text{EVoI} = \text{uncertainty} \times \text{risk} \times (1 + \text{disagreement})
-$$
-
-Constrained by a **session budget** (max N HITL calls). In automated experiment mode, HITL questions are logged but auto-responded.
-
-:material-file-code: `src/systems/dicwo/hitl.py`
+| Field | Description |
+|-------|-------------|
+| `rounds_used` | Number of iterations executed |
+| `completed_subtasks` | List of completed subtask names |
+| `early_stop` | Whether acceptance criteria triggered early exit |
+| `spawned_agents` | Dynamically created agents with credentialing info |
+| `topology` | Final communication graph structure |
+| `reputation` | Per-agent reputation scores |
+| `synergy` | Pair-wise agent synergy scores |
+| `subtask_quality` | Quality score for each completed subtask |
+| `coverage_gaps` | Subtasks that had no capable bidders |
+| `failure_tracker` | Consecutive failure count per subtask |
 
 ## Configuration
 

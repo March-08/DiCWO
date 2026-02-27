@@ -129,6 +129,31 @@ Vote for one protocol. Respond with JSON:
 }}
 """
 
+JOINT_SELECT_PROMPT = """\
+You are voting on three decisions at once for the subtask "{subtask}":
+
+1. **Team (A)**: Which coalition should execute this subtask?
+   Options: {team_options}
+
+2. **Topology (G)**: What communication topology should the team use?
+   Options: full, star, ring
+
+3. **Protocol (p)**: What execution protocol should be used?
+   Options: solo, audit, debate, parallel, tool_verified
+
+Context:
+{context}
+
+Respond with JSON:
+{{
+  "team": "<team option label, e.g. 'coalition_0'>",
+  "topology": "<full|star|ring>",
+  "protocol": "<solo|audit|debate|parallel|tool_verified>",
+  "confidence": <0.0-1.0>,
+  "reasoning": "<brief justification>"
+}}
+"""
+
 
 class ConsensusEngine:
     """Runs distributed voting, debate, and consensus among agents."""
@@ -274,6 +299,101 @@ class ConsensusEngine:
             return "solo"
 
         return max(tallies, key=lambda k: tallies[k])
+
+    def joint_consensus_select(
+        self,
+        subtask: str,
+        coalitions: list[dict[str, Any]],
+        agents: dict[str, BaseAgent],
+        context: str = "",
+    ) -> tuple[list[str], str, str]:
+        """Joint consensus on (team, topology, protocol) — paper's ConsensusSelect.
+
+        Three voters vote on the triple; tallied per-dimension by confidence weight.
+
+        Args:
+            subtask: The subtask to assign.
+            coalitions: List of coalition dicts with 'label' and 'members' keys.
+            agents: Available agents to use as voters.
+            context: Current state context.
+
+        Returns:
+            (team_members, topology, protocol) tuple.
+        """
+        if not coalitions:
+            # Fallback: first available agent, full topology, solo protocol
+            fallback_agent = next(iter(agents.keys()), "unknown")
+            return [fallback_agent], "full", "solo"
+
+        # Build team option labels for prompt
+        team_option_strs = []
+        for c in coalitions:
+            team_option_strs.append(f"{c['label']}: {c['members']}")
+        team_options_text = "; ".join(team_option_strs)
+
+        # Select up to 3 voters
+        voter_names = list(agents.keys())[:3]
+        voters = {n: agents[n] for n in voter_names if n in agents}
+
+        # Collect votes
+        team_tallies: dict[str, float] = {}
+        topo_tallies: dict[str, float] = {}
+        proto_tallies: dict[str, float] = {}
+
+        valid_topos = {"full", "star", "ring"}
+        valid_protos = {"solo", "audit", "debate", "parallel", "tool_verified"}
+
+        for name, agent in voters.items():
+            prompt = JOINT_SELECT_PROMPT.format(
+                subtask=subtask,
+                team_options=team_options_text,
+                context=context[:1500],
+            )
+            response, _record = agent.run(prompt)
+            vote = self._parse_joint_vote(response)
+
+            conf = vote.get("confidence", 0.5)
+            team_choice = vote.get("team", coalitions[0]["label"])
+            topo_choice = vote.get("topology", "full")
+            proto_choice = vote.get("protocol", "solo")
+
+            team_tallies[team_choice] = team_tallies.get(team_choice, 0) + conf
+            if topo_choice in valid_topos:
+                topo_tallies[topo_choice] = topo_tallies.get(topo_choice, 0) + conf
+            if proto_choice in valid_protos:
+                proto_tallies[proto_choice] = proto_tallies.get(proto_choice, 0) + conf
+
+        # Pick winners per dimension
+        winning_team_label = max(team_tallies, key=lambda k: team_tallies[k]) if team_tallies else coalitions[0]["label"]
+        winning_topo = max(topo_tallies, key=lambda k: topo_tallies[k]) if topo_tallies else "full"
+        winning_proto = max(proto_tallies, key=lambda k: proto_tallies[k]) if proto_tallies else "solo"
+
+        # Resolve team label → members
+        team_members: list[str] = []
+        for c in coalitions:
+            if c["label"] == winning_team_label:
+                team_members = c["members"]
+                break
+        if not team_members:
+            team_members = coalitions[0]["members"]
+
+        return team_members, winning_topo, winning_proto
+
+    def _parse_joint_vote(self, raw: str) -> dict[str, Any]:
+        """Parse a joint (team, topology, protocol) vote response."""
+        json_match = re.search(r"\{[^{}]*\}", raw, re.DOTALL)
+        if json_match:
+            try:
+                data = json.loads(json_match.group())
+                return {
+                    "team": data.get("team", ""),
+                    "topology": data.get("topology", "full"),
+                    "protocol": data.get("protocol", "solo"),
+                    "confidence": float(data.get("confidence", 0.5)),
+                }
+            except (json.JSONDecodeError, ValueError):
+                pass
+        return {"team": "", "topology": "full", "protocol": "solo", "confidence": 0.5}
 
     def _parse_vote(self, agent_name: str, raw: str) -> Vote:
         """Parse a vote response from an agent."""

@@ -49,9 +49,10 @@ SYSTEM_DESCRIPTIONS = {
         "Payload Expert, Mission Analyst). The manager decides task order and routing."
     ),
     "dicwo": (
-        "**Distributed Calibration-Weighted Orchestration** — agents autonomously bid for tasks "
-        "based on capability scores, reach consensus via voting, and self-organize through "
-        "checkpoints. The most advanced architecture with dynamic agent spawning and HITL support."
+        "**Distributed Calibration-Weighted Orchestration** — agents autonomously bid for tasks, "
+        "form coalitions, and jointly select team + topology + protocol via consensus. "
+        "Iteration-level processing with a simplified 3-action policy (Continue / Rewire / Stop) "
+        "and dual-trigger agent spawning."
     ),
 }
 
@@ -246,12 +247,13 @@ if system_type == "dicwo":
             "The threshold sets how much agreement is needed before accepting a result."
         ),
         "Checkpoint Thresholds": (
-            "After each task, a checkpoint evaluates the output quality. "
-            "If disagreement or uncertainty is too high, the system rewires (reassigns) or escalates."
+            "After each iteration, a checkpoint evaluates the output quality for all subtasks. "
+            "If disagreement or uncertainty is too high, the policy triggers a topology rewire."
         ),
-        "HITL Budget": (
-            "Human-in-the-Loop: if the system is highly uncertain about a result, it can request "
-            "human review. EVoI (Expected Value of Information) measures how much a human review would help."
+        "Legacy Thresholds": (
+            "Parameters kept for backward compatibility. "
+            "The EVoI threshold and HITL call limit are no longer used in the active policy loop "
+            "but are still accepted by the configuration."
         ),
         "Policy": (
             "Controls when the system stops retrying and what quality threshold triggers early completion."

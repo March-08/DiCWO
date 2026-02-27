@@ -79,20 +79,18 @@ class PolicyEngine:
         signals: CheckpointSignals,
         round_num: int,
         max_rounds: int,
-        available_capabilities: set[str],
-        needed_capabilities: set[str],
+        available_capabilities: set[str] | None = None,
+        needed_capabilities: set[str] | None = None,
         subtask: str = "",
     ) -> PolicyDecision:
         """Evaluate signals and return a policy decision.
 
-        Decision priority (paper Section 5.9):
+        Simplified 3-action policy (Figure 1):
         1. Acceptance criteria met → STOP
-        2. High risk + disagreement → HITL (if budget allows)
-        3. Low verifiability → VERIFY
-        4. Capability gap → SPAWN
-        5. High disagreement → REWIRE
-        6. High uncertainty → ESCALATE
-        7. Otherwise → CONTINUE
+        2. High disagreement or uncertainty → REWIRE
+        3. Otherwise → CONTINUE
+
+        HITL and SPAWN are handled separately in system.py.
         """
 
         # Track quality for this subtask
@@ -100,7 +98,7 @@ class PolicyEngine:
         if subtask:
             self.subtask_quality[subtask] = quality
 
-        # 1. Check acceptance criteria (paper's AcceptanceCriteriaMet)
+        # 1. Acceptance criteria met → STOP
         if self._acceptance_criteria_met():
             return PolicyDecision(
                 action=PolicyAction.STOP,
@@ -108,61 +106,21 @@ class PolicyEngine:
                 params={"quality_scores": dict(self.subtask_quality)},
             )
 
-        # 2. High risk + high disagreement → HITL (with budget check)
+        # 2. High disagreement or uncertainty → REWIRE
         if (
-            signals.risk > self.risk_threshold
-            and signals.disagreement > self.disagreement_threshold
+            signals.disagreement > self.disagreement_threshold
+            or signals.uncertainty > self.uncertainty_threshold
         ):
-            evoi = self._estimate_evoi(signals)
-            if evoi > self.hitl_evoi_threshold and self.hitl_count < self.max_hitl_calls:
-                return PolicyDecision(
-                    action=PolicyAction.HITL,
-                    reason=(
-                        f"High risk ({signals.risk:.2f}) with disagreement "
-                        f"({signals.disagreement:.2f}). EVoI={evoi:.2f}. "
-                        f"HITL budget: {self.hitl_count}/{self.max_hitl_calls}"
-                    ),
-                    params={"evoi": evoi},
-                )
-
-        # 3. Low verifiability → VERIFY (re-run with extra review)
-        if signals.verifiability < 0.4 and signals.uncertainty > 0.4:
-            return PolicyDecision(
-                action=PolicyAction.VERIFY,
-                reason=(
-                    f"Low verifiability ({signals.verifiability:.2f}) with "
-                    f"uncertainty ({signals.uncertainty:.2f}). "
-                    f"Requesting re-verification."
-                ),
-                params={"subtask": subtask},
-            )
-
-        # 4. Capability gap → spawn
-        missing = needed_capabilities - available_capabilities
-        if missing and self.spawned_count < self.max_spawned_agents:
-            return PolicyDecision(
-                action=PolicyAction.SPAWN,
-                reason=f"Missing capabilities: {missing}",
-                params={"missing_capabilities": list(missing)},
-            )
-
-        # 5. High disagreement alone → rewire topology
-        if signals.disagreement > self.disagreement_threshold:
             return PolicyDecision(
                 action=PolicyAction.REWIRE,
-                reason=f"Disagreement ({signals.disagreement:.2f}) exceeds threshold",
+                reason=(
+                    f"Disagreement ({signals.disagreement:.2f}) or "
+                    f"uncertainty ({signals.uncertainty:.2f}) exceeds threshold"
+                ),
                 params={"target_topology": "full"},
             )
 
-        # 6. High uncertainty → escalate for review
-        if signals.uncertainty > self.uncertainty_threshold:
-            return PolicyDecision(
-                action=PolicyAction.ESCALATE,
-                reason=f"Uncertainty ({signals.uncertainty:.2f}) exceeds threshold",
-                params={},
-            )
-
-        # 7. All good → continue
+        # 3. All good → CONTINUE
         return PolicyDecision(
             action=PolicyAction.CONTINUE,
             reason="Signals within acceptable bounds",

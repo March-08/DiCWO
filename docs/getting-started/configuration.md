@@ -90,9 +90,9 @@ system_params:
   consensus_threshold: 0.7     # Agreement ratio for consensus
   min_voters: 3                # Minimum agents in votes
   disagreement_threshold: 0.3  # Triggers topology rewire
-  uncertainty_threshold: 0.5   # Triggers escalation
-  risk_threshold: 0.6          # Triggers HITL consideration
-  hitl_evoi_threshold: 0.7     # EVoI threshold for human input
+  uncertainty_threshold: 0.5   # Triggers topology rewire
+  risk_threshold: 0.6          # Combined risk threshold
+  acceptance_quality: 0.7      # Min quality for early stop
   max_spawned_agents: 2        # Max dynamically created agents
   agent_ttl_rounds: 5          # Spawned agents expire after N rounds
   protocols:                   # Available execution protocols
@@ -107,5 +107,7 @@ system_params:
 | `calibration_decay` | 0.9 | Lower = harsher penalty for failed tasks |
 | `diversity_bonus` | 0.1 | Higher = more rotation across agents |
 | `consensus_threshold` | 0.7 | Lower = easier agreement |
+| `disagreement_threshold` | 0.3 | Higher = less frequent topology rewires |
+| `uncertainty_threshold` | 0.5 | Higher = less frequent topology rewires |
 | `risk_threshold` | 0.6 | Lower = more frequent interventions |
-| `hitl_evoi_threshold` | 0.7 | Lower = more human-in-the-loop questions |
+| `acceptance_quality` | 0.7 | Higher = stricter early-stop criterion |

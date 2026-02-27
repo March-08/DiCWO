@@ -48,6 +48,26 @@ class Bid:
 
 
 @dataclass
+class CoalitionProposal:
+    """A candidate micro-coalition for a subtask."""
+
+    subtask: str
+    members: list[str]
+    coalition_type: str  # proposer_critic / solver_verifier / parallel_independent
+    synergy_score: float
+    combined_fit: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "subtask": self.subtask,
+            "members": self.members,
+            "coalition_type": self.coalition_type,
+            "synergy_score": round(self.synergy_score, 4),
+            "combined_fit": round(self.combined_fit, 4),
+        }
+
+
+@dataclass
 class BiddingEngine:
     """Computes calibration-weighted bids for subtask assignment.
 
@@ -149,6 +169,63 @@ class BiddingEngine:
         """Return top-k agents for a subtask (for coalition formation)."""
         bids = self.compute_bids(subtask, registry)
         return [b.agent_name for b in bids[:k]]
+
+    def propose_coalitions(
+        self,
+        subtask: str,
+        registry: BeaconRegistry,
+    ) -> list[CoalitionProposal]:
+        """Generate candidate micro-coalitions from top bidders.
+
+        Produces solo (top-1) and pair coalitions from top 3-4 bidders,
+        scored by combined fit + synergy. Coalition type is determined by
+        the relative strength gap between members.
+        """
+        bids = self.compute_bids(subtask, registry)
+        if not bids:
+            return []
+
+        proposals: list[CoalitionProposal] = []
+
+        # Solo proposal: top-1 bidder
+        top = bids[0]
+        proposals.append(CoalitionProposal(
+            subtask=subtask,
+            members=[top.agent_name],
+            coalition_type="parallel_independent",
+            synergy_score=0.0,
+            combined_fit=top.fit,
+        ))
+
+        # Pair proposals from top 3-4 bidders
+        top_bids = bids[:min(4, len(bids))]
+        for i in range(len(top_bids)):
+            for j in range(i + 1, len(top_bids)):
+                a, b = top_bids[i], top_bids[j]
+                synergy = self.get_synergy(a.agent_name, b.agent_name)
+                combined_fit = (a.fit + b.fit) / 2.0
+
+                # Determine coalition type by relative strength gap
+                gap = abs(a.score - b.score)
+                if gap > 0.3:
+                    # Large gap: stronger agent leads, weaker verifies
+                    ctype = "proposer_critic"
+                elif gap > 0.1:
+                    ctype = "solver_verifier"
+                else:
+                    ctype = "parallel_independent"
+
+                proposals.append(CoalitionProposal(
+                    subtask=subtask,
+                    members=[a.agent_name, b.agent_name],
+                    coalition_type=ctype,
+                    synergy_score=synergy,
+                    combined_fit=combined_fit + 0.2 * synergy,
+                ))
+
+        # Sort by combined_fit descending
+        proposals.sort(key=lambda p: p.combined_fit, reverse=True)
+        return proposals
 
     def update_calibration(
         self,
