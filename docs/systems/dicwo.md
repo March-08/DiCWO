@@ -1,47 +1,64 @@
 # System 3: DiCWO
 
-**Distributed Calibration-Weighted Orchestration** — the proposed system. Agents self-organize through an iteration-level loop with coalition proposals, joint consensus, and a simplified adaptive policy (Figure 1).
+**Distributed Calibration-Weighted Orchestration** — the proposed system. Agents self-organize through a closed-loop orchestration mechanism combining calibration-aware selection, adaptive topologies and protocols, checkpoint-driven reconfiguration, and governed agent synthesis (Figure 1).
 
-## Architecture
+## Architecture (Figure 1)
 
 ```mermaid
-graph LR
-    D[Consensus<br/>Decomposition] --> B[Beacons]
-    B --> Bi[Bidding +<br/>Coalition Proposals]
-    Bi --> CS[Joint ConsensusSelect<br/>Team + Topology + Protocol]
-    CS --> E[Execution]
-    E --> Ch[Checkpoint]
-    Ch --> P[Policy]
-    P -->|continue| B
-    P -->|rewire| T[Topology]
-    P -->|stop| S[Accept & Stop]
-    Ch -->|coverage gap /<br/>persistent failure| F[Agent Factory]
+flowchart TB
+    Init["Initialize S₀ from task T\nand budgets"] --> Broadcast["Broadcast\ncompressed Sₜ"]
+    Broadcast --> Beacons["Beacon emission\nB_i(t) from each agent"]
+    Beacons --> Decomp{"Optional decomposition\nΔ*(t) via consensus"}
+    Decomp --> Bidding["Bidding + coalition proposals\n(fit, cost, calibration, diversity)"]
+    Bidding --> Consensus["Distributed consensus\nselect A_t,k, G_t,k, p_t,k\n(robust aggregate)"]
+    Consensus --> Execute["Execute protocol(s)\n(solo / vote / debate / verify)\nwrite artifacts to memory"]
+    Execute --> Checkpoint["Checkpoint eval\nΓₜ = disagreement, uncertainty,\nverifiability, risk"]
+    Checkpoint --> Policy{"Policy\nπ(Γₜ, Sₜ, budgets)"}
+
+    Policy -->|"stable /\nverified"| Continue["Continue\n(keep topology)"]
+    Policy -->|"disagree /\nuncertain"| Rewire["Rewire\n(change G, p;\nadd/remove agents)"]
+    Policy -->|"HITL\ntrigger"| HITL["Selective HITL\nask minimal question (EVoI)\nupdate Sₜ"]
+
+    Continue --> Trust["Update trust signals\ncalibration, reputation,\nsynergy; set S_{t+1}"]
+    Rewire --> Trust
+    HITL --> Trust
+
+    Trust --> Accept{"Acceptance\ncriteria met?"}
+    Accept -->|yes| Final["Return final\nsolution + audit trail"]
+    Accept -->|no| Broadcast
+
+    Birth["Governed agent birth\ncredentialing + TTL\nupdate A"] -.->|"Bidding/Consensus\n(coverage gap)\nand/or\nCheckpoint/Policy\n(persistent failure)"| Beacons
 ```
 
-## Main Loop (Figure 1)
+## Main Loop (Pseudocode)
 
 ```
-Initialize shared state S_0 from T
-subtasks = ConsensusMerge({Decompose(S_t, P_i)})
+Initialize S_0 from task T and budgets
 
 for t = 0..T_max:
-    compressed = compress_state(S_t)
-    broadcast beacons (compressed S_t)
-    optional re-decomposition (every 3 rounds or after rewire)
-    for each pending subtask T_k:
-        bids = compute_bids(T_k)
-        coalitions = propose_coalitions(T_k)
-        (A, G, p) = joint_consensus_select(coalitions)
-        outputs_k = execute(T_k, A[0], p, A)
-    signals_map = checkpoint_iteration(outputs)
-    decision = policy(aggregate(signals_map))
-    handle_policy(decision)            # Continue / Rewire / Stop
-    maybe_spawn_agents()               # dual trigger: coverage gap + persistent failure
+    broadcast compressed(S_t) to agent pool
+    for each agent: B_i(t) = emit_beacon(S_t, P_i)
+    Δ*(t) = optional consensus_decompose(S_t)
+    for each subtask T_k in Δ*(t):
+        bids = compute_bids(T_k)             # fit, cost, calibration, diversity
+        coalitions = propose_coalitions(T_k)  # micro-coalitions with synergy
+        (A, G, p) = consensus_select(bids, coalitions)  # team, topology, protocol
+        outputs_k = execute(A, G, p, S_t)
+        write_artifacts(outputs_k)
+    Γ_t = checkpoint(S_t, new_artifacts)      # disagreement, uncertainty, verifiability, risk
+    action = π(Γ_t, S_t, budgets)             # Continue / Rewire / HITL
+    if action == HITL: selective_question(EVoI), update S_t
+    if action == Rewire: change G, p; add/remove agents
+    governed_agent_birth(coverage_gaps, persistent_failures)
     update_calibration_reputation_synergy()
-    if acceptance_met(): break
+    S_{t+1} = updated state
+    if acceptance_criteria_met(S_t): return solution + audit trail
 ```
 
 The loop processes **all pending subtasks per iteration** (not one at a time), then makes a single aggregate policy decision.
+
+!!! note "HITL in current implementation"
+    Selective HITL escalation is part of the DiCWO architecture (Figure 1) but is **disabled** in the current implementation. The policy returns Continue, Rewire, or Stop (early acceptance). HITL support can be re-enabled when a human-in-the-loop interface is available.
 
 ## The Phases
 
@@ -140,30 +157,33 @@ Signals are aggregated across subtasks using **worst-case**: highest disagreemen
 
 :material-file-code: `src/systems/dicwo/checkpoint.py`
 
-### 6. Policy (3 actions)
+### 6. Policy π(Γₜ, Sₜ, budgets)
 
-Based on the aggregated checkpoint signals, the policy engine decides:
+The policy maps checkpoint signals to one of **three control actions** (Figure 1):
 
 | Decision | Trigger | Action |
 |----------|---------|--------|
-| **Stop** | All subtasks above quality threshold | Accept results and exit early |
-| **Rewire** | High disagreement or uncertainty | Change communication topology |
-| **Continue** | Signals within bounds | Proceed to next iteration |
+| **Continue** | Stable, verified — low disagreement + sufficient evidence | Keep current topology and protocol, advance to next iteration |
+| **Rewire** | Disagree / uncertain — additional deliberation or diversity needed | Change topology G and/or protocol p; may add/remove agents |
+| **HITL** | High uncertainty + low verifiability + high risk | Select minimal question via EVoI, present to human, incorporate response |
 
-Agent spawning is handled separately (see below), not by the policy engine.
+Agent spawning is handled separately via governed agent birth (see below).
 
-**Acceptance Criteria**: `acceptance_met()` checks if all tracked subtasks are above the quality threshold (default 0.7), enabling early loop termination.
+**Acceptance Criteria**: After trust updates, `acceptance_met()` checks if all tracked subtasks are above the quality threshold (default 0.7). This is a **separate decision point** from the policy (see Figure 1 diamond), enabling early loop termination.
+
+!!! note "Current implementation"
+    HITL is disabled — the policy returns Continue, Rewire, or Stop (when acceptance criteria are met). The HITL path will be activated when a human interface is connected.
 
 :material-file-code: `src/systems/dicwo/policy.py`
 
-### 7. Agent Spawning (Dual Trigger)
+### 7. Governed Agent Birth (Dual Trigger)
 
-Agent spawning is decoupled from the policy and triggered by two conditions:
+Agent birth is decoupled from the policy and triggered by two conditions (Figure 1, top-right):
 
-1. **Coverage gap** — a subtask had no capable bidders during the bidding phase
-2. **Persistent failure** — a subtask failed checkpoint >= 2 consecutive times
+1. **Bidding / Consensus — coverage gap**: no agent (or coalition) achieves minimum suitability for a necessary subtask
+2. **Checkpoint / Policy — persistent failure**: verification repeatedly flags missing expertise (>= 2 consecutive failures)
 
-Spawned agents go through credentialing (entrance micro-task) and have a TTL.
+When triggered, a role synthesis mechanism proposes a new agent specification, which is then credentialed via a lightweight entrance micro-task. Newly created agents are governed by explicit budget constraints and **TTL retirement rules** to prevent uncontrolled expansion. Upon acceptance, the agent pool **A** is updated and subsequent iterations re-run beacon emission and consensus selection.
 
 :material-file-code: `src/systems/dicwo/agent_factory.py`
 
@@ -189,15 +209,15 @@ The policy engine can **rewire** the topology when disagreement or uncertainty i
 
 :material-file-code: `src/systems/dicwo/topology.py`
 
-### Agent Factory
+### Agent Factory (Governed Agent Birth)
 
-When a **coverage gap** or **persistent failure** is detected, the factory synthesizes a new specialist with **credentialing**:
+When a **coverage gap** (bidding/consensus) or **persistent failure** (checkpoint) is detected, the factory synthesizes a new specialist with **credentialing**:
 
-1. Uses the LLM to generate a role description
-2. Runs an **entrance micro-task** (domain-specific question)
-3. Evaluates the answer for technical accuracy
-4. Admits only if score >= threshold (default 0.5)
-5. Assigns a **TTL** — the agent is garbage-collected after N rounds
+1. Role synthesis — uses the LLM to generate a role description (scope, tools, rubric)
+2. Entrance micro-task — runs a domain-specific credentialing question
+3. Peer evaluation — evaluates the answer for technical accuracy
+4. Consensus acceptance — admits only if score >= threshold (default 0.5)
+5. **TTL + budget governance** — the agent is garbage-collected after N rounds; total spawned agents are capped
 
 :material-file-code: `src/systems/dicwo/agent_factory.py`
 
