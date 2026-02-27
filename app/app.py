@@ -51,6 +51,7 @@ st.markdown(
 
     ---
 
-    Use the **sidebar navigation** to get started.
+    Use the **sidebar navigation** to get started, or read the
+    [full documentation](https://dicwo-docs.vercel.app/).
     """
 )

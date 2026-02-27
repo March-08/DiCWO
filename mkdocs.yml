@@ -1,7 +1,8 @@
 site_name: DiCWO — Multi-Agent Satellite Mission Design
+site_url: https://dicwo-docs.vercel.app/
 site_description: Distributed Calibration-Weighted Orchestration for comparing LLM system architectures on satellite constellation design.
-repo_url: https://github.com/marcellopoliti/MAS-Mission-Planning
-repo_name: MAS-Mission-Planning
+repo_url: https://github.com/March-08/DiCWO
+repo_name: DiCWO
 
 theme:
   name: material

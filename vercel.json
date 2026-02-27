@@ -1,5 +1,5 @@
 {
-  "buildCommand": "pip install --break-system-packages mkdocs-material && python -m mkdocs build",
+  "buildCommand": "pip install --break-system-packages mkdocs-material pymdown-extensions && python -m mkdocs build --strict",
   "outputDirectory": "site",
   "framework": null
 }

@@ -60,3 +60,10 @@ def render_sidebar() -> None:
             st.error("Last run failed", icon="\u274c")
         elif get("run_results"):
             st.success(f"{len(get('run_results', []))} run(s) complete", icon="\u2705")
+
+        # Links
+        st.divider()
+        st.markdown(
+            "[\U0001f4d6 Documentation](https://dicwo-docs.vercel.app/) "
+            "| [\U0001f4bb GitHub](https://github.com/March-08/DiCWO)"
+        )
