@@ -1,9 +1,11 @@
 """Run all 3 systems and generate a grouped comparison report.
 
 Usage:
-    python3 scripts/run_all.py                     # 1 run each
-    python3 scripts/run_all.py --repeat 3           # 3 runs each, averaged
-    python3 scripts/run_all.py --repeat 5 --no-judge  # 5 runs, skip judge
+    python3 scripts/run_all.py                                    # 1 run each (YAML defaults)
+    python3 scripts/run_all.py --repeat 4                          # 4 runs each, averaged
+    python3 scripts/run_all.py --model openai/gpt-5.2-chat         # override agent model (OpenRouter)
+    python3 scripts/run_all.py --model gpt-4o --provider openai    # use OpenAI directly
+    python3 scripts/run_all.py --model openai/gpt-5.2-chat --repeat 4 --judge-model openai/gpt-5.2-chat
 """
 
 from __future__ import annotations
@@ -47,11 +49,27 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run all 3 systems and compare")
     parser.add_argument("--repeat", "-n", type=int, default=1,
                         help="Number of runs per system (default: 1)")
+    parser.add_argument("--model", "-m", type=str, default=None,
+                        help="Override agent model for all systems (e.g. openai/gpt-5.2-chat)")
+    parser.add_argument("--provider", "-p", type=str, default=None,
+                        help="Override provider (openai or openrouter). "
+                             "Auto-detected from model name if not set.")
+    parser.add_argument("--judge-model", type=str, default=None,
+                        help="Override judge model (default: same as --model if set)")
+    parser.add_argument("--judge-provider", type=str, default=None,
+                        help="Override judge provider (default: same as --provider)")
     parser.add_argument("--no-judge", action="store_true",
                         help="Skip LLM judge evaluation")
     parser.add_argument("--results-dir", default="results",
                         help="Base results directory (default: results/)")
     args = parser.parse_args()
+
+    # Auto-detect provider from model name if not explicitly set
+    if args.model and not args.provider:
+        if "/" in args.model:
+            args.provider = "openrouter"
+        else:
+            args.provider = "openai"
 
     load_dotenv()
     api_keys = _collect_api_keys()
@@ -74,6 +92,20 @@ def main() -> None:
 
     for config_path in CONFIGS:
         config = ExperimentConfig.from_yaml(config_path)
+
+        # Apply CLI overrides
+        if args.model:
+            config.model = args.model
+        if args.provider:
+            config.provider = args.provider
+        if args.judge_model:
+            config.judge_model = args.judge_model
+        elif args.model:
+            config.judge_model = args.model
+        if args.judge_provider:
+            config.judge_provider = args.judge_provider
+        elif args.provider:
+            config.judge_provider = args.provider
         if args.no_judge:
             config.run_judge = False
 
