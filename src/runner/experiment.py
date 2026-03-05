@@ -132,6 +132,7 @@ class ExperimentRunner:
 
         self._save_results(result, llm)
         self._save_mission_report(result)
+        self._save_conversation_trace(result)
 
         evaluation = {}
         if self.config.run_judge:
@@ -274,6 +275,18 @@ class ExperimentRunner:
 
         report_path = self.run_dir / "mission_report.md"
         report_path.write_text("\n".join(lines))
+
+    def _save_conversation_trace(self, result: SystemResult) -> None:
+        """Render and save a human-readable conversation trace for expert review."""
+        from src.core.logging_utils import ConversationLogger
+
+        # Reconstruct logger from the conversation log entries
+        logger = ConversationLogger(entries=list(result.conversation_log))
+        trace_md = logger.render_conversation_trace(
+            system_type=self.config.system_type,
+        )
+        trace_path = self.run_dir / "conversation_trace.md"
+        trace_path.write_text(trace_md)
 
     def _run_judge(self, result: SystemResult, llm: LLMClient) -> dict[str, Any]:
         try:

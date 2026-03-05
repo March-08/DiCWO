@@ -135,10 +135,12 @@ def main() -> None:
     print(f"  comparison.json  — structured data")
     for d in system_dirs:
         name = Path(d).name
-        has_mission = (Path(d) / "mission_report.md").exists()
         has_best = (Path(d) / "mission_report_best.md").exists()
+        has_mission = (Path(d) / "mission_report.md").exists()
         report_label = "mission_report_best.md" if has_best else ("mission_report.md" if has_mission else "")
-        print(f"  {name}/  {report_label}")
+        has_trace = (Path(d) / "conversation_trace.md").exists()
+        trace_label = " + conversation_trace.md" if has_trace else ""
+        print(f"  {name}/  {report_label}{trace_label}")
 
 
 if __name__ == "__main__":

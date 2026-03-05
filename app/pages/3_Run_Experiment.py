@@ -135,12 +135,25 @@ def _start_run(system_types: list[str], repeat: int) -> None:
 # ── Pre-flight checks ────────────────────────────────────────
 
 provider = get("provider", "openrouter")
-has_key = has_api_key_for(provider)
+has_agent_key = has_api_key_for(provider)
 
-if not has_key:
+judge_provider = get("judge_provider", "openrouter")
+run_judge = get("run_judge", True)
+has_judge_key = has_api_key_for(judge_provider) if run_judge else True
+
+has_key = has_agent_key and has_judge_key
+
+if not has_agent_key:
     st.warning(
-        f"No API key set for **{provider}**. "
+        f"No API key set for agent provider **{provider}**. "
         "Enter it in the sidebar (left panel) before running.",
+        icon="\u26a0\ufe0f",
+    )
+
+if run_judge and not has_judge_key and judge_provider != provider:
+    st.warning(
+        f"No API key set for judge provider **{judge_provider}**. "
+        "Enter it in the sidebar, or disable the LLM Judge on the Configure page.",
         icon="\u26a0\ufe0f",
     )
 

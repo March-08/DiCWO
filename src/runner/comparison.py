@@ -20,7 +20,7 @@ def load_run(run_dir: str | Path) -> dict[str, Any]:
             result[filename.replace(".json", "")] = load_json(path)
 
     for md_name in ["report.md", "mission_report.md", "summary.md",
-                    "mission_report_best.md"]:
+                    "mission_report_best.md", "conversation_trace.md"]:
         path = run_dir / md_name
         if path.exists():
             result[md_name.replace(".md", "")] = path.read_text()

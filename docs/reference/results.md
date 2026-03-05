@@ -8,11 +8,12 @@
     results/
       20260219_143000_single_agent_gpt-4o/
         mission_report.md         # Readable design output
+        conversation_trace.md     # Human-readable agent interaction transcript
         report.md                 # Metrics summary
         metadata.json             # Config snapshot
         metrics.json              # Tokens, costs, latencies
         artifacts.json            # Raw agent outputs
-        conversation_log.json     # Full message trace
+        conversation_log.json     # Full message trace (JSON)
         evaluation.json           # Judge scores
     ```
 
@@ -100,9 +101,19 @@ The primary output — a human-readable design document. For single-agent this i
 
 Raw agent outputs keyed by artifact name (`market_analysis`, `payload_design`, etc.). Machine-readable version of the mission report.
 
+### `conversation_trace.md`
+
+Human-readable Markdown transcript of the full agent interaction chain-of-thought. Formatted per system type:
+
+- **Single Agent**: system prompt, user task, and agent response.
+- **Centralized Manager**: round-by-round manager decisions (with reasoning), task delegation, and specialist responses.
+- **DiCWO**: iteration-level view showing bidding/coalitions, consensus selection, execution (with protocol), checkpoint signals, policy decisions, topology rewires, and agent spawns.
+
+This file is designed for expert reviewers evaluating orchestration quality: task delegation efficiency, decision-making structure, expert response integration, and iteration quality. Each entry includes token/cost/latency metadata where available.
+
 ### `conversation_log.json`
 
-Full message trace with timestamps, agent names, roles, and per-call metadata (tokens, cost, latency). Useful for debugging orchestration.
+Full message trace with timestamps, agent names, roles, and per-call metadata (tokens, cost, latency). Machine-readable version of the conversation trace, useful for programmatic analysis.
 
 ### `evaluation.json`
 

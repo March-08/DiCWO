@@ -31,7 +31,12 @@ Run with repetitions for statistical averaging:
 python3 scripts/run_all.py --repeat 3
 ```
 
-Results are saved to `results/<timestamp>_comparison/` with mission reports, metrics, evaluation scores, and comparison tables.
+Results are saved to `results/<timestamp>_comparison/` with mission reports, conversation traces, metrics, evaluation scores, and comparison tables.
+
+Each run produces two key files for expert review:
+
+- `mission_report.md` — the technical design output
+- `conversation_trace.md` — human-readable transcript of all agent interactions, task delegation, and decision-making (for orchestration quality evaluation)
 
 ## Configuration
 

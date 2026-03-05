@@ -387,6 +387,20 @@ if view_mode == "Single Run":
         with st.expander("View Full Report", expanded=False):
             st.markdown(report_text)
 
+    # ── Conversation Trace ────────────────────────────────────
+
+    trace_text = data.get("conversation_trace", "")
+    if trace_text:
+        st.divider()
+        st.subheader("Conversation Trace")
+        st.caption(
+            "Full chain-of-thought transcript showing agent interactions, "
+            "task delegation, and decision-making — used for orchestration "
+            "quality evaluation."
+        )
+        with st.expander("View Full Conversation Trace", expanded=False):
+            st.markdown(trace_text)
+
     # ── Metrics Report ────────────────────────────────────────
 
     metrics_report_text = data.get("report", "")
@@ -401,7 +415,7 @@ if view_mode == "Single Run":
     st.subheader("Downloads")
     st.caption("Export results for offline analysis or sharing.")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
 
     with col1:
         if report_text:
@@ -416,6 +430,18 @@ if view_mode == "Single Run":
             st.button("\U0001f4c4 No report", disabled=True, use_container_width=True)
 
     with col2:
+        if trace_text:
+            st.download_button(
+                "\U0001f4ac Conversation Trace (.md)",
+                data=trace_text,
+                file_name="conversation_trace.md",
+                mime="text/markdown",
+                use_container_width=True,
+            )
+        else:
+            st.button("\U0001f4ac No trace", disabled=True, use_container_width=True)
+
+    with col3:
         metrics_json = json.dumps(metrics_data, indent=2, default=str)
         st.download_button(
             "\U0001f4ca Metrics (.json)",
@@ -425,7 +451,7 @@ if view_mode == "Single Run":
             use_container_width=True,
         )
 
-    with col3:
+    with col4:
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
             if selected_path.is_dir():
@@ -547,6 +573,12 @@ elif view_mode == "Compare Systems (Group)":
                 with st.expander("Mission Report", expanded=False):
                     st.markdown(report)
 
+            # Conversation trace
+            sys_trace = sys_data.get("conversation_trace", "")
+            if sys_trace:
+                with st.expander("Conversation Trace", expanded=False):
+                    st.markdown(sys_trace)
+
     # ── Markdown comparison ───────────────────────────────────
 
     with st.expander("Raw Comparison (Markdown)"):
@@ -666,3 +698,8 @@ elif view_mode == "Compare Selected Runs":
             if report:
                 with st.expander("Mission Report", expanded=False):
                     st.markdown(report)
+
+            run_trace = run_data.get("conversation_trace", "")
+            if run_trace:
+                with st.expander("Conversation Trace", expanded=False):
+                    st.markdown(run_trace)
