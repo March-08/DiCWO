@@ -39,7 +39,7 @@ from src.systems.dicwo.agent_factory import AgentFactory
 from src.systems.dicwo.beacon import AGENT_CAPABILITIES, Beacon, BeaconRegistry
 from src.systems.dicwo.bidding import BiddingEngine
 from src.systems.dicwo.checkpoint import CheckpointEvaluator, CheckpointSignals
-from src.systems.dicwo.confidence import ConfidenceGateway
+from src.systems.dicwo.confidence import ConfidenceAction, ConfidenceGateway
 from src.systems.dicwo.consensus import ConsensusEngine
 from src.systems.dicwo.escalation import EscalationLadder, ESCALATION_LADDER
 from src.systems.dicwo.policy import PolicyAction, PolicyEngine
@@ -135,9 +135,10 @@ class DiCWOSystem(BaseSystem):
             list(self.agents.keys()), topology="full"
         )
 
-        # Confidence gateway (inner quality loop)
+        # Confidence gateway (tiered: proceed / reflect / intervene)
         self.confidence_gateway = ConfidenceGateway(
             threshold=params.get("confidence_threshold", 85),
+            low_threshold=params.get("confidence_low_threshold", 50),
             max_retries=params.get("confidence_max_retries", 2),
         )
 
@@ -631,6 +632,7 @@ class DiCWOSystem(BaseSystem):
             outputs[primary_agent] = response
 
             self._log_confidence(primary_agent, subtask, gw_result)
+            self._handle_intervention(primary_agent, subtask, gw_result)
             self.logger.log(
                 agent=primary_agent,
                 role="assistant",
@@ -647,6 +649,7 @@ class DiCWOSystem(BaseSystem):
             outputs[primary_agent] = response
 
             self._log_confidence(primary_agent, subtask, gw_result)
+            self._handle_intervention(primary_agent, subtask, gw_result)
             self.logger.log(
                 agent=primary_agent,
                 role="assistant",
@@ -700,6 +703,7 @@ class DiCWOSystem(BaseSystem):
                 outputs[agent.name] = response
 
                 self._log_confidence(agent.name, subtask, gw_result)
+                self._handle_intervention(agent.name, subtask, gw_result)
                 self.logger.log(
                     agent=agent.name,
                     role="assistant",
@@ -722,6 +726,7 @@ class DiCWOSystem(BaseSystem):
                 outputs[name] = response
 
                 self._log_confidence(name, subtask, gw_result)
+                self._handle_intervention(name, subtask, gw_result)
                 self.logger.log(
                     agent=name,
                     role="assistant",
@@ -738,6 +743,7 @@ class DiCWOSystem(BaseSystem):
             outputs[primary_agent] = response
 
             self._log_confidence(primary_agent, subtask, gw_result)
+            self._handle_intervention(primary_agent, subtask, gw_result)
             self.logger.log(
                 agent=primary_agent,
                 role="assistant",
@@ -746,6 +752,65 @@ class DiCWOSystem(BaseSystem):
             )
 
         return outputs
+
+    def _handle_intervention(
+        self,
+        agent_name: str,
+        subtask: str,
+        gw_result: Any,
+    ) -> None:
+        """Handle confidence gateway interventions.
+
+        When an agent's confidence is critically low (<50%), the gateway
+        returns an InterventionRequest instead of blindly retrying.  This
+        method escalates the subtask through the protocol ladder and logs
+        the missing information so the next iteration can address it.
+        """
+        if gw_result.action_taken != ConfidenceAction.INTERVENE:
+            return
+
+        intervention = gw_result.intervention
+        if intervention is None:
+            return
+
+        # Escalate the subtask protocol for the next iteration
+        if not self.escalation.at_max(subtask):
+            old_proto = self.escalation.get_protocol(subtask)
+            new_proto = self.escalation.escalate(subtask)
+            print(
+                f"  [DiCWO] Confidence intervention for '{subtask}': "
+                f"escalated {old_proto} -> {new_proto}"
+            )
+        else:
+            print(
+                f"  [DiCWO] Confidence intervention for '{subtask}': "
+                f"already at max escalation"
+            )
+
+        # Track as failure so spawn trigger can fire
+        self.failure_tracker[subtask] = (
+            self.failure_tracker.get(subtask, 0) + 1
+        )
+
+        # Log the structured intervention for traceability
+        self.logger.log(
+            agent=agent_name,
+            role="confidence_intervention",
+            content=(
+                f"Agent '{agent_name}' requested intervention for '{subtask}'.\n"
+                f"Missing info: {intervention.missing_info}\n"
+                f"Blockers: {intervention.blockers}\n"
+                f"Partial result: {intervention.partial_result[:300]}\n"
+                f"Suggested sources: {intervention.suggested_sources}"
+            ),
+            metadata={
+                "subtask": subtask,
+                "confidence": gw_result.final_confidence,
+                "missing_info": intervention.missing_info,
+                "blockers": intervention.blockers,
+                "suggested_sources": intervention.suggested_sources,
+            },
+        )
 
     def _log_confidence(
         self,
