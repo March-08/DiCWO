@@ -38,5 +38,8 @@ system_params:
   max_spawned_agents: 2
   agent_ttl_rounds: 5
   credential_threshold: 0.5
+  # Confidence gateway
+  confidence_threshold: 85
+  confidence_max_retries: 2
   # Protocols
   protocols: ["solo", "audit", "debate", "parallel", "tool_verified"]

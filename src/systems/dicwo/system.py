@@ -39,7 +39,9 @@ from src.systems.dicwo.agent_factory import AgentFactory
 from src.systems.dicwo.beacon import AGENT_CAPABILITIES, Beacon, BeaconRegistry
 from src.systems.dicwo.bidding import BiddingEngine
 from src.systems.dicwo.checkpoint import CheckpointEvaluator, CheckpointSignals
+from src.systems.dicwo.confidence import ConfidenceGateway
 from src.systems.dicwo.consensus import ConsensusEngine
+from src.systems.dicwo.escalation import EscalationLadder, ESCALATION_LADDER
 from src.systems.dicwo.policy import PolicyAction, PolicyEngine
 from src.systems.dicwo.topology import TopologyGraph
 
@@ -133,6 +135,15 @@ class DiCWOSystem(BaseSystem):
             list(self.agents.keys()), topology="full"
         )
 
+        # Confidence gateway (inner quality loop)
+        self.confidence_gateway = ConfidenceGateway(
+            threshold=params.get("confidence_threshold", 85),
+            max_retries=params.get("confidence_max_retries", 2),
+        )
+
+        # Protocol escalation ladder
+        self.escalation = EscalationLadder()
+
         # Failure tracking for spawn trigger
         self.failure_tracker: dict[str, int] = {}  # subtask → consecutive failures
         self.coverage_gap_log: list[str] = []  # subtasks with no capable agents
@@ -207,10 +218,24 @@ class DiCWOSystem(BaseSystem):
                     subtask, coalition_options, round_num
                 )
 
+                # Enforce escalation floor: consensus can go higher, never lower
+                raw_protocol = protocol
+                protocol = EscalationLadder.enforce_floor(protocol, subtask, self.escalation)
+
+                escalation_info = ""
+                if protocol != raw_protocol:
+                    escalation_info = (
+                        f" (escalated from {raw_protocol}, "
+                        f"level {self.escalation.get_level(subtask)})"
+                    )
+
                 self.logger.log(
                     agent="DiCWO",
                     role="consensus",
-                    content=f"Joint select: team={team}, topology={topo}, protocol={protocol}",
+                    content=(
+                        f"Joint select: team={team}, topology={topo}, "
+                        f"protocol={protocol}{escalation_info}"
+                    ),
                     metadata={"round": round_num, "subtask": subtask},
                 )
 
@@ -222,6 +247,7 @@ class DiCWOSystem(BaseSystem):
 
                 # 4d. Execute
                 primary = team[0] if team else bids[0].agent_name
+                self.escalation.record_attempt(subtask)
                 outputs = self._execute(subtask, primary, protocol, team)
                 iteration_outputs[subtask] = outputs
                 iteration_teams[subtask] = team
@@ -239,19 +265,56 @@ class DiCWOSystem(BaseSystem):
                 metadata={"round": round_num},
             )
 
-            # Step 7: Handle policy (Continue/Rewire/Stop)
+            # Step 7: Handle policy + escalation
+            #   On REWIRE: identify subtasks with bad signals and escalate them.
+            #   Escalated subtasks are NOT marked completed — they re-enter pending
+            #   on the next iteration with a higher protocol floor.
             self._handle_policy_v2(decision)
+            escalated_this_round: set[str] = set()
+
             if decision.action == PolicyAction.REWIRE:
                 last_rewire_round = round_num
+                for subtask, signals in signals_map.items():
+                    is_bad = (
+                        signals.disagreement > self.policy.disagreement_threshold
+                        or signals.uncertainty > self.policy.uncertainty_threshold
+                    )
+                    if is_bad and not self.escalation.at_max(subtask):
+                        old_proto = self.escalation.get_protocol(subtask)
+                        new_proto = self.escalation.escalate(subtask)
+                        escalated_this_round.add(subtask)
+                        print(
+                            f"  [DiCWO] Escalated '{subtask}': "
+                            f"{old_proto} -> {new_proto}"
+                        )
+                        self.logger.log(
+                            agent="DiCWO",
+                            role="escalation",
+                            content=(
+                                f"Escalated '{subtask}': {old_proto} -> {new_proto} "
+                                f"(disagreement={signals.disagreement:.2f}, "
+                                f"uncertainty={signals.uncertainty:.2f})"
+                            ),
+                            metadata={"round": round_num, "subtask": subtask},
+                        )
 
             # Step 8: Maybe spawn agents (dual trigger)
             self._maybe_spawn_agents(round_num)
 
             # Step 9: Store outputs, update trust
+            #   Skip escalated subtasks — they will be retried next iteration.
             for subtask, outputs in iteration_outputs.items():
                 signals = signals_map.get(subtask)
                 team = iteration_teams.get(subtask, [])
                 primary = team[0] if team else next(iter(outputs), "unknown")
+
+                if subtask in escalated_this_round:
+                    # Don't store or mark complete; will retry with escalated protocol
+                    if signals:
+                        self.failure_tracker[subtask] = (
+                            self.failure_tracker.get(subtask, 0) + 1
+                        )
+                    continue
 
                 self._store_output(subtask, outputs, primary)
                 completed_subtasks.append(subtask)
@@ -308,6 +371,8 @@ class DiCWOSystem(BaseSystem):
                     k: dict(v) for k, v in self.bidding.synergy.items()
                 },
                 "subtask_quality": dict(self.policy.subtask_quality),
+                "confidence_gateway": self.confidence_gateway.to_dict(),
+                "escalation": self.escalation.to_dict(),
                 "coverage_gaps": self.coverage_gap_log,
                 "failure_tracker": dict(self.failure_tracker),
             },
@@ -560,11 +625,12 @@ class DiCWOSystem(BaseSystem):
 
         if protocol == "solo":
             agent = self.agents[primary_agent]
-            if context:
-                agent.inject_context(context)
-            response, record = agent.run(task_desc)
+            response, record, gw_result = self.confidence_gateway.gate(
+                agent, subtask, task_desc, context=context,
+            )
             outputs[primary_agent] = response
 
+            self._log_confidence(primary_agent, subtask, gw_result)
             self.logger.log(
                 agent=primary_agent,
                 role="assistant",
@@ -573,13 +639,14 @@ class DiCWOSystem(BaseSystem):
             )
 
         elif protocol == "audit":
-            # Primary executes, then another agent reviews
+            # Primary executes with confidence gating, then another agent reviews
             agent = self.agents[primary_agent]
-            if context:
-                agent.inject_context(context)
-            response, record = agent.run(task_desc)
+            response, record, gw_result = self.confidence_gateway.gate(
+                agent, subtask, task_desc, context=context,
+            )
             outputs[primary_agent] = response
 
+            self._log_confidence(primary_agent, subtask, gw_result)
             self.logger.log(
                 agent=primary_agent,
                 role="assistant",
@@ -616,7 +683,7 @@ class DiCWOSystem(BaseSystem):
                 )
 
         elif protocol == "debate":
-            # Two agents from coalition produce outputs, then debate
+            # Two agents from coalition produce outputs with confidence gating
             debate_agents = []
             if coalition and len(coalition) >= 2:
                 debate_agents = [self.agents[n] for n in coalition[:2] if n in self.agents]
@@ -627,11 +694,12 @@ class DiCWOSystem(BaseSystem):
                 ][:2]
 
             for agent in debate_agents:
-                if context:
-                    agent.inject_context(context)
-                response, record = agent.run(task_desc)
+                response, record, gw_result = self.confidence_gateway.gate(
+                    agent, subtask, task_desc, context=context,
+                )
                 outputs[agent.name] = response
 
+                self._log_confidence(agent.name, subtask, gw_result)
                 self.logger.log(
                     agent=agent.name,
                     role="assistant",
@@ -640,7 +708,7 @@ class DiCWOSystem(BaseSystem):
                 )
 
         elif protocol == "parallel":
-            # All capable agents execute in parallel (sequential in practice)
+            # All capable agents execute with confidence gating
             capable = self.registry.get_capable_agents(subtask)
             agent_names = [b.agent_name for b in capable] or [primary_agent]
 
@@ -648,11 +716,12 @@ class DiCWOSystem(BaseSystem):
                 agent = self.agents.get(name)
                 if not agent:
                     continue
-                if context:
-                    agent.inject_context(context)
-                response, record = agent.run(task_desc)
+                response, record, gw_result = self.confidence_gateway.gate(
+                    agent, subtask, task_desc, context=context,
+                )
                 outputs[name] = response
 
+                self._log_confidence(name, subtask, gw_result)
                 self.logger.log(
                     agent=name,
                     role="assistant",
@@ -661,13 +730,14 @@ class DiCWOSystem(BaseSystem):
                 )
 
         elif protocol == "tool_verified":
-            # Fallback: execute like solo
+            # Fallback: execute like solo with confidence gating
             agent = self.agents[primary_agent]
-            if context:
-                agent.inject_context(context)
-            response, record = agent.run(task_desc)
+            response, record, gw_result = self.confidence_gateway.gate(
+                agent, subtask, task_desc, context=context,
+            )
             outputs[primary_agent] = response
 
+            self._log_confidence(primary_agent, subtask, gw_result)
             self.logger.log(
                 agent=primary_agent,
                 role="assistant",
@@ -676,6 +746,33 @@ class DiCWOSystem(BaseSystem):
             )
 
         return outputs
+
+    def _log_confidence(
+        self,
+        agent_name: str,
+        subtask: str,
+        gw_result: Any,
+    ) -> None:
+        """Log confidence gateway results."""
+        last = gw_result.records[-1] if gw_result.records else None
+        attempts = len(gw_result.records)
+        self.logger.log(
+            agent=agent_name,
+            role="confidence_gateway",
+            content=(
+                f"Confidence gate [{subtask}]: "
+                f"score={gw_result.final_confidence}%, "
+                f"passed={gw_result.passed}, "
+                f"attempts={attempts}"
+                + (f", reason={last.reason}" if last else "")
+            ),
+            metadata={
+                "subtask": subtask,
+                "confidence": gw_result.final_confidence,
+                "passed": gw_result.passed,
+                "attempts": attempts,
+            },
+        )
 
     def _store_output(
         self,
