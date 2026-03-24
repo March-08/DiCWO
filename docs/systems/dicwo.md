@@ -138,9 +138,50 @@ Three voters cast votes on the triple; votes are tallied **per dimension** weigh
 
 :material-file-code: `src/systems/dicwo/consensus.py` — `joint_consensus_select()`
 
-### 4. Execution
+### 4. Execution with Confidence Gateway
 
-The selected protocol runs according to the chosen strategy (solo, audit, debate, parallel, or tool-verified).
+The selected protocol runs according to the chosen strategy (solo, audit, debate, parallel, or tool-verified). All executions pass through a **tiered confidence gateway** that prevents blind acceptance of weak outputs.
+
+After each agent produces a response, it self-assesses confidence (0–100). The gateway routes the output through one of three tiers:
+
+| Confidence | Action | Strategy |
+|-----------|--------|----------|
+| **>= 85%** | **Proceed** | Accept output as-is |
+| **50–85%** | **Reflect** | Agent self-critiques, identifies weak assumptions, then retries with critique context |
+| **< 50%** | **Intervene** | Agent stops retrying and reports a structured request for missing information |
+
+The reflect tier uses a two-step process:
+
+1. **Reflexion prompt**: "Identify contradictions, weak assumptions, unsupported claims" — produces a structured critique
+2. **Retry prompt**: "Based on your self-critique, produce an improved response addressing each weak point"
+
+The intervene tier produces an `InterventionRequest` containing `missing_info`, `blockers`, `partial_result`, and `suggested_sources` — enabling targeted escalation rather than blind reruns.
+
+!!! tip "Why tiered branching?"
+    Blind reruns with the same prompt tend to produce hallucination spirals. The gateway distinguishes between **reasoning errors** (fixable via reflexion) and **information gaps** (which require intervention or escalation), applying the right strategy for each.
+
+:material-file-code: `src/systems/dicwo/confidence.py`
+
+### 4b. Escalation Protocol
+
+When confidence remains low after reflection, or when checkpoint signals indicate persistent problems, the **escalation ladder** increases the rigor applied to a subtask:
+
+| Level | Protocol | Description |
+|-------|----------|-------------|
+| 0 | **Solo** | Single agent drafts alone |
+| 1 | **Audit** | Draft + independent reviewer |
+| 2 | **Debate** | Two agents propose competing outputs, best selected |
+| 3 | **Tool-verified** | Extra self-review/verification step |
+
+Escalation is triggered by:
+
+- Confidence gateway **intervene** action (confidence < 50%)
+- Checkpoint **rewire** decision (high disagreement or uncertainty)
+- Persistent failure (subtask fails >= 2 consecutive times)
+
+Once escalated, the protocol acts as a **floor** — consensus can vote for equal or higher protocol, never lower. Subtasks re-enter the pending queue at the next iteration with the elevated protocol.
+
+:material-file-code: `src/systems/dicwo/escalation.py`
 
 ### 5. Checkpoint
 
@@ -237,6 +278,8 @@ Each DiCWO run produces metadata including:
 | `subtask_quality` | Quality score for each completed subtask |
 | `coverage_gaps` | Subtasks that had no capable bidders |
 | `failure_tracker` | Consecutive failure count per subtask |
+| `confidence_gateway` | Stats: total checks, passed/failed, reflections, interventions, avg confidence |
+| `escalation` | Per-subtask escalation levels reached and attempt counts |
 
 ## Configuration
 

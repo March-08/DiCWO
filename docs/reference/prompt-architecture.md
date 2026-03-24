@@ -101,6 +101,29 @@ Roles have a dual purpose — they are both the **system prompt** for LLM calls 
 
 3. **Consensus & Protocols**: Task descriptions are also used by the consensus mechanism to select execution protocols (solo, audit, debate, parallel) based on subtask complexity.
 
+## Reference Constraints
+
+Task descriptions for the three most error-prone subtasks include **reference constraints** — domain-specific sanity checks that prevent common physics and unit errors without adding any extra LLM calls:
+
+- **Market Analysis**: Throughput derivation formula, concurrency ratios, realistic per-user data rates
+- **Frequency Filing**: Smartphone EIRP (~23 dBm), G/T ranges (−34 to −24 dB/K), valid DTHH bands, mandatory comparison table against existing operators
+- **Payload Design**: FSPL values per altitude, antenna directivity formula with expected gains, beamwidth formula, AST SpaceMobile reference values, link margin requirements, unit consistency rules
+
+These constraints are embedded directly in `TASK_DESCRIPTIONS` in `src/domain/prompts.py` and are used by both centralized and DiCWO systems.
+
+## Confidence Gateway Prompts
+
+DiCWO executions pass through a confidence gateway with dedicated prompts:
+
+| Prompt | Purpose |
+|--------|---------|
+| **Confidence prompt** | "Rate your confidence 0–100 with reason" (JSON response) |
+| **Reflexion prompt** | "Identify contradictions, weak assumptions, unsupported claims" |
+| **Reflexion retry prompt** | "Based on your self-critique, produce an improved response" |
+| **Intervention prompt** | "Stop retrying — identify what specific data/info is missing" |
+
+:material-file-code: `src/systems/dicwo/confidence.py`
+
 ## Editing Prompts: What Changes
 
 | What you edit | Effect |
