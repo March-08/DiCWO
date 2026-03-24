@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -80,7 +81,9 @@ def main() -> None:
 
     # Create a group directory for this experiment batch
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    group_dir = Path(args.results_dir) / f"{timestamp}_comparison"
+    # Include model name in dir to avoid collisions when running in parallel
+    model_tag = args.model.replace("/", "_") if args.model else "default"
+    group_dir = Path(args.results_dir) / f"{timestamp}_{model_tag}_comparison"
     group_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Experiment group: {group_dir}")
@@ -88,9 +91,8 @@ def main() -> None:
     print(f"API keys loaded:  {', '.join(api_keys.keys())}")
     print()
 
-    system_dirs: list[str] = []
-
-    for config_path in CONFIGS:
+    def _run_system(config_path: str) -> dict:
+        """Run a single system config (all repeats). Thread-safe."""
         config = ExperimentConfig.from_yaml(config_path)
 
         # Apply CLI overrides
@@ -126,7 +128,7 @@ def main() -> None:
         if args.repeat > 1:
             result = runner.run_repeated(n=args.repeat)
             avgs = result["averages"]
-            print(f"\n  Averages ({args.repeat} runs):")
+            print(f"\n  Averages ({args.repeat} runs) [{config.system_type}]:")
             print(f"    Tokens:  {avgs.get('total_tokens', 0):,.0f}")
             print(f"    Cost:    ${avgs.get('cost_usd', 0):.4f}")
             print(f"    Latency: {avgs.get('latency_s', 0):.1f}s")
@@ -139,7 +141,15 @@ def main() -> None:
             print(f"  Cost:    ${metrics['cost_usd']:.4f}")
             print(f"  Latency: {metrics['latency_s']:.1f}s")
 
-        system_dirs.append(result["run_dir"])
+        return result
+
+    # Run all 3 systems in parallel, each with parallel repeats
+    system_dirs: list[str] = []
+    with ThreadPoolExecutor(max_workers=len(CONFIGS)) as pool:
+        futures = {pool.submit(_run_system, cp): cp for cp in CONFIGS}
+        for future in as_completed(futures):
+            result = future.result()
+            system_dirs.append(result["run_dir"])
 
     # Generate comparison
     print(f"\n{'='*60}")

@@ -29,12 +29,21 @@ _PRICING: dict[str, tuple[float, float]] = {
     "o3":                 (10.00, 40.00),
     "o4-mini":            (1.10,  4.40),
     # OpenRouter — frontier / strong models
-    "openai/gpt-5.2-chat":                 (2.00,  8.00),
+    "openai/gpt-5.2-chat":                 (1.75, 14.00),
     "openai/o3":                           (10.00, 40.00),
     "openai/o4-mini":                      (1.10,  4.40),
     "anthropic/claude-sonnet-4":           (3.00, 15.00),
+    "anthropic/claude-sonnet-4.6":         (3.00, 15.00),
     "anthropic/claude-opus-4":             (15.00, 75.00),
     "google/gemini-2.5-pro-preview":       (1.25, 10.00),
+    "google/gemini-3-flash-preview":       (0.15, 0.60),
+    "deepseek/deepseek-v3.2":             (0.14, 0.28),
+    "minimax/minimax-m2.5":               (0.20, 0.80),
+    "minimax/minimax-m2.5:nitro":         (0.20, 0.80),
+    "qwen/qwen3-32b:nitro":              (0.10, 0.30),
+    "z-ai/glm-4.7:nitro":                (0.20, 0.80),
+    "x-ai/grok-4.1-fast":                (2.00, 8.00),
+    "openai/gpt-oss-120b:nitro":          (0.039, 0.19),
     # OpenRouter — mid-tier models
     "openai/gpt-4o":                       (2.50, 10.00),
     "openai/gpt-4o-mini":                  (0.15,  0.60),
@@ -48,8 +57,9 @@ _PRICING: dict[str, tuple[float, float]] = {
     # OpenRouter — cheap / free models
     "meta-llama/llama-4-scout":            (0.15, 0.60),
     "meta-llama/llama-4-maverick":         (0.20, 0.80),
-    "meta-llama/llama-3.3-70b-instruct":       (0.10, 0.30),
-    "meta-llama/llama-3.3-70b-instruct:free": (0.00, 0.00),
+    "meta-llama/llama-3.3-70b-instruct":        (0.10, 0.32),
+    "meta-llama/llama-3.3-70b-instruct:nitro": (0.10, 0.32),
+    "meta-llama/llama-3.3-70b-instruct:free":  (0.00, 0.00),
     "meta-llama/llama-3.1-8b-instruct":       (0.02, 0.05),
     "mistralai/mistral-small-3.1-24b-instruct": (0.10, 0.30),
     "qwen/qwen3-235b-a22b":               (0.20, 0.60),
@@ -93,7 +103,7 @@ class LLMClient:
         if url:
             kwargs["base_url"] = url
 
-        self._client = OpenAI(**kwargs)
+        self._client = OpenAI(timeout=120.0, **kwargs)
 
         # tiktoken encoding — fall back to cl100k_base for non-OpenAI models
         try:

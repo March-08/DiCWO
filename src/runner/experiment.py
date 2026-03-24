@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import platform
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -154,7 +155,7 @@ class ExperimentRunner:
             "evaluation": evaluation,
         }
 
-    def run_repeated(self, n: int = 3) -> dict[str, Any]:
+    def run_repeated(self, n: int = 3, parallel: bool = True) -> dict[str, Any]:
         """Run the experiment N times, save each run, and compute averages.
 
         Results are saved as:
@@ -162,15 +163,13 @@ class ExperimentRunner:
             run_1/  run_2/  run_3/  ...
             averages.json
             mission_report_best.md   (from the run with highest judge score)
+
+        If parallel=True, all N runs execute concurrently via threads.
         """
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
-        all_results: list[dict[str, Any]] = []
-        run_dirs: list[str] = []
-
-        for i in range(1, n + 1):
+        def _run_single(i: int) -> dict[str, Any]:
             print(f"\n--- {self.config.system_type} run {i}/{n} ---")
-
             sub_runner = ExperimentRunner(
                 config=self.config,
                 api_keys=self.api_keys,
@@ -178,9 +177,22 @@ class ExperimentRunner:
                 run_label=f"run_{i}",
                 progress_callback=self.progress_callback,
             )
-            result = sub_runner.run()
-            all_results.append(result)
-            run_dirs.append(result["run_dir"])
+            return sub_runner.run()
+
+        all_results: list[dict[str, Any]] = [None] * n  # type: ignore[list-item]
+        run_dirs: list[str] = []
+
+        if parallel and n > 1:
+            with ThreadPoolExecutor(max_workers=n) as pool:
+                futures = {pool.submit(_run_single, i): i for i in range(1, n + 1)}
+                for future in as_completed(futures):
+                    idx = futures[future] - 1
+                    all_results[idx] = future.result()
+        else:
+            for i in range(1, n + 1):
+                all_results[i - 1] = _run_single(i)
+
+        run_dirs = [r["run_dir"] for r in all_results]
 
         # Compute averages
         averages = self._compute_averages(all_results)
