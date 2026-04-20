@@ -134,6 +134,7 @@ def load_detailed_data(results_dir: str, exp_dirs: list[str]) -> dict:
         "per_run_scores": defaultdict(list),     # (model, system) → [score, …]
         "per_subtask_scores": defaultdict(list),  # (model, subtask) → [score, …]
         "per_subtask_scores_by_system": defaultdict(list),  # (model, system, subtask) → [score, …]
+        "per_criteria_scores": defaultdict(list),  # (model, system, criterion) → [score, …]
         "call_logs": defaultdict(list),           # (model, system) → [call_records]
         "per_agent_tokens": defaultdict(lambda: defaultdict(list)),  # model → agent → [tokens]
         "confidence_gateway": defaultdict(list),  # model → [gateway_stats]
@@ -172,6 +173,22 @@ def load_detailed_data(results_dir: str, exp_dirs: list[str]) -> dict:
                         if isinstance(v, dict) and "overall_score" in v:
                             detail["per_subtask_scores"][(model, k)].append(v["overall_score"])
                             detail["per_subtask_scores_by_system"][(model, sys_type, k)].append(v["overall_score"])
+                            # Per-criteria scores (all systems)
+                            for crit, cval in v.get("criteria_scores", {}).items():
+                                if isinstance(cval, dict) and "score" in cval:
+                                    detail["per_criteria_scores"][(model, sys_type, crit)].append(cval["score"])
+
+                # Per-subtask scores for single_agent (from re-judge)
+                if sys_type == "single_agent":
+                    per_st_path = run_dir / "evaluation_per_subtask.json"
+                    if per_st_path.exists():
+                        ps = json.load(open(per_st_path))
+                        for k, v in ps.items():
+                            if k.startswith("_"):
+                                continue
+                            if isinstance(v, dict) and "overall_score" in v:
+                                detail["per_subtask_scores"][(model, k)].append(v["overall_score"])
+                                detail["per_subtask_scores_by_system"][(model, sys_type, k)].append(v["overall_score"])
 
                 # Call logs
                 metrics_path = run_dir / "metrics.json"
@@ -536,15 +553,15 @@ def fig_per_subtask_scores_by_system(detail: dict, df: dict, out: Path):
     n = len(models)
     width = 0.8 / n
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), sharey=True)
-    systems = ["centralized", "dicwo"]
+    fig, axes = plt.subplots(1, 3, figsize=(17, 4.5), sharey=True)
+    systems = ["single_agent", "centralized", "dicwo"]
 
     for ax, sys in zip(axes, systems):
         x = np.arange(len(subtasks))
         for i, m in enumerate(models):
             means, stds = [], []
             for st in subtasks:
-                key = st if sys == "dicwo" else centralized_alt.get(st, st)
+                key = st if sys != "centralized" else centralized_alt.get(st, st)
                 scores = detail["per_subtask_scores_by_system"].get(
                     (m, sys, key), [])
                 means.append(np.mean(scores) if scores else 0)
